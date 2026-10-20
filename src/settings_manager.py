@@ -4,6 +4,15 @@ import shutil
 from pathlib import Path
 
 
+def running_under_wine() -> bool:
+    try:
+        import ctypes
+        ctypes.windll.ntdll.wine_get_version
+    except (AttributeError, OSError):
+        return False
+    return True
+
+
 DEFAULT_THEME = {
     "bg_color": "#1e1e1e",
     "alt_bg": "#2d2d2d",
@@ -45,7 +54,8 @@ DEFAULT_SETTINGS = {
     # Arms freeform window resizing on game clients: a draggable resize border plus
     # automatic camera-aspect correction so the 3D view fills any window size
     # undistorted. Disable to leave game windows untouched.
-    "client_resizing": True,
+    # Off by default under Wine, its 0.3 s tick makes the game flicker and freeze there.
+    "client_resizing": not running_under_wine(),
     # [launcher]
     "remember_chosen_clients": False,
     # Verify/patch game files (via the bundled wizpatch binary) before launching.
