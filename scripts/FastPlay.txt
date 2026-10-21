@@ -1,0 +1,1 @@
+?(self.beneficial_charms == 0) any<blade> @ self | any<damage&aoe> @ aoe | any<damage> @ enemy

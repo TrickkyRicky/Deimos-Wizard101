@@ -1,0 +1,141 @@
+###deimos_expertmode
+# @name: Universal Reagent Picker
+# @zone: General
+# @author:
+# @format: expertmode
+# @description: Background reagent picker meant to run while auto-questing is on.
+# Set the *_Farm toggles to 1 for the reagents you want; idle-only, one pickup per scan.
+
+# ---------------------------------------------------------
+# Universal Reagent Picker (optimized copy)
+#
+# Meant to run in the background WHILE auto-questing is on:
+# whenever a toggled reagent is in range and the client is idle
+# (no combat, dialogue, NPC menu or loading screen), it teleports to
+# the reagent, picks it up with X, and questing carries on.
+#
+# 1 = On (Farming when spawned) 0 = Off (Ignoring when spawned)
+# ---------------------------------------------------------
+
+setvar AetherOre_Farm = 0
+setvar Agave_Farm = 0
+setvar Antiquity_Farm = 0
+setvar Artifacts_Farm = 0
+setvar AvalonRose_Farm = 0
+setvar BlackLotus_Farm = 0
+setvar CatTail_Farm = 0
+setvar CometTail_Farm = 0
+setvar Common_Farm = 0
+setvar DreamStone_Farm = 0
+setvar FrostFlower_Farm = 0
+setvar FrostedFlax_Farm = 0
+setvar Fulgurite_Farm = 0
+setvar Ichor_Farm = 0
+setvar Kelp_Farm = 0
+setvar LavaLilly_Farm = 0
+setvar Mandrake_Farm = 0
+setvar Mushroom_Farm = 0
+setvar Ore_Farm = 0
+setvar Parchment_Farm = 0
+setvar Pearl_Farm = 0
+setvar Polygons_Farm = 0
+setvar PretzelSticks_Farm = 0
+setvar Sandstone_Farm = 0
+setvar Scraplron_Farm = 0
+setvar Shell_Farm = 0
+setvar Stone_Farm = 0
+setvar Wood_Farm = 0
+
+# Seconds between scans while idle
+setvar ScanDelay = 0.5
+# Seconds to let the pickup finish before scanning again
+setvar PickupDelay = 1.5
+
+block Reagent {
+	# Never interfere with questing's own dialogue, combat, NPC menus or loading
+	if p1 incombat {
+		return
+	}
+	if p1 loading {
+		return
+	}
+	if p1 windowvisible ['WorldView', 'wndDialogMain'] {
+		return
+	}
+	if p1 windowvisible ['WorldView', 'NPCServicesWin'] {
+		return
+	}
+
+	if p1 inrange "AetherOre" or "Agave" or "Antiquity" or "Artifacts" or "AvalonRose" or "Black Lotus" or "CatTail" or "CometTail" or "Common" or "DreamStone" or "Frost Flower" or "FrostedFlax" or "Fulgurite" or "Slime" or "Kelp" or "Lava Lilly" or "Mandrake" or "Mushroom" or "Ore" or "Parchment" or "Pearl" or "Polygons" or "PretzelSticks" or "Sandstone" or "Scraplron" or "Shell" or "Stone" or "Wood" {
+		# One reagent per pass; the first enabled match wins
+		if AetherOre_Farm = 1 {
+			p1 entitytp AetherOre
+		} elif Agave_Farm = 1 {
+			p1 entitytp Agave
+		} elif Antiquity_Farm = 1 {
+			p1 entitytp Antiquity
+		} elif Artifacts_Farm = 1 {
+			p1 entitytp Artifacts
+		} elif AvalonRose_Farm = 1 {
+			p1 entitytp AvalonRose
+		} elif BlackLotus_Farm = 1 {
+			p1 entitytp "Black Lotus"
+		} elif CatTail_Farm = 1 {
+			p1 entitytp CatTail
+		} elif CometTail_Farm = 1 {
+			p1 entitytp CometTail
+		} elif Common_Farm = 1 {
+			p1 entitytp Common
+		} elif DreamStone_Farm = 1 {
+			p1 entitytp DreamStone
+		} elif FrostFlower_Farm = 1 {
+			p1 entitytp "Frost Flower"
+		} elif FrostedFlax_Farm = 1 {
+			p1 entitytp FrostedFlax
+		} elif Fulgurite_Farm = 1 {
+			p1 entitytp Fulgurite
+		} elif Ichor_Farm = 1 {
+			p1 entitytp Slime
+		} elif Kelp_Farm = 1 {
+			p1 entitytp Kelp
+		} elif LavaLilly_Farm = 1 {
+			p1 entitytp "Lava Lilly"
+		} elif Mandrake_Farm = 1 {
+			p1 entitytp Mandrake
+		} elif Mushroom_Farm = 1 {
+			p1 entitytp Mushroom
+		} elif Ore_Farm = 1 {
+			p1 entitytp Ore
+		} elif Parchment_Farm = 1 {
+			p1 entitytp Parchment
+		} elif Pearl_Farm = 1 {
+			p1 entitytp Pearl
+		} elif Polygons_Farm = 1 {
+			p1 entitytp Polygons
+		} elif PretzelSticks_Farm = 1 {
+			p1 entitytp PretzelSticks
+		} elif Sandstone_Farm = 1 {
+			p1 entitytp Sandstone
+		} elif Scraplron_Farm = 1 {
+			p1 entitytp Scraplron
+		} elif Shell_Farm = 1 {
+			p1 entitytp Shell
+		} elif Stone_Farm = 1 {
+			p1 entitytp Stone
+		} elif Wood_Farm = 1 {
+			p1 entitytp Wood
+		}
+		sleep 0.4
+	}
+
+	if p1 windowtext ['WorldView', 'NPCRangeWin', 'imgBackground', 'NPCRangeTxtMessage'] contains "<center>press <image;gui/art/art_keyboard_x.dds> <image;gui/art/art_mouse_left_click.dds>" {
+		p1 sendkey X, 0.2
+		sleep PickupDelay
+	}
+}
+
+# Runs until you stop the bot
+loop {
+	call Reagent
+	sleep ScanDelay
+}
