@@ -30,6 +30,8 @@ dungeon_warning_path = ['MessageBoxModalWindow', 'messageBoxBG', 'messageBoxLayo
 advance_dialog_path = ['WorldView', 'wndDialogMain', 'btnRight']
 decline_quest_path = ['WorldView', 'wndDialogMain', 'btnLeft']
 dialog_text_path = ['WorldView', 'wndDialogMain', 'txtArea', 'txtMessage']
+dialog_main_path = ['WorldView', 'wndDialogMain']
+npc_services_path = ['WorldView', 'NPCServicesWin']
 
 # Quest Objective Path
 quest_name_path = ["WorldView", "windowHUD", "QuestHelperHud", "ElementWindow", "", "txtGoalName"]

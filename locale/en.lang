@@ -41,6 +41,7 @@ xyz_sync=XYZ Sync
 x_press=X Press
 friend_tp=Friend TP
 dialogue_side_quests=Accept Side Quests
+zone_lock=Lock to Current Zone
 kill_tool=Kill Tool
 
 # Hotkey Manager

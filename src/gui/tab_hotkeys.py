@@ -35,6 +35,8 @@ def build_hotkeys_tab(ctx):
         send_queue.put(GUICommand(GUICommandType.FriendTeleport))
     def dialogue_side_quests_callback():
         send_queue.put(GUICommand(GUICommandType.ToggleDialogueSideQuests))
+    def zone_lock_callback():
+        send_queue.put(GUICommand(GUICommandType.ToggleZoneLock))
 
     # --- Left panel: Hotkey Manager ---
     hk_manager = QWidget()
@@ -73,6 +75,7 @@ def build_hotkeys_tab(ctx):
             ("toggle_dialogue_side_quests", tl('dialogue_side_quests'), dialogue_side_quests_callback, True, 'SideQuestAccept', _toggle_icons['speech']),
             ("toggle_sigil", tl('sigil'), toggle_callback(send_queue, GUIKeys.toggle_sigil), True, tl('sigil'), _toggle_icons['bot']),
             ("toggle_questing", tl('questing'), toggle_callback(send_queue, GUIKeys.toggle_questing), True, tl('questing'), _toggle_icons['brain']),
+            ("toggle_zone_lock", tl('zone_lock'), zone_lock_callback, True, 'ZoneLock', _toggle_icons['goal']),
             ("toggle_auto_pet", tl('auto_pet'), toggle_callback(send_queue, GUIKeys.toggle_auto_pet), True, tl('auto_pet'), _toggle_icons['paw']),
             ("toggle_auto_potion", tl('auto_potion'), toggle_callback(send_queue, GUIKeys.toggle_auto_potion), True, tl('auto_potion'), _toggle_icons['flask']),
             ("toggle_drops", tl('no_drops'), toggle_callback(send_queue, GUIKeys.toggle_drops), True, 'No Drops', _toggle_icons['scroll-text']),

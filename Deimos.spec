@@ -47,6 +47,7 @@ datas = [
     ('Deimos-logo.ico', '.'),
     ('Deimos-logo.png', '.'),
     ('locale', 'locale'),
+    ('bundled_bots', 'bundled_bots'),
     # The katsuba TypeList is no longer shipped: it's generated on demand by wiztype
     # from the running client and cached per-revision under %APPDATA%/Deimos/types/.
 ]

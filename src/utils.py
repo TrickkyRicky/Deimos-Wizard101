@@ -82,6 +82,59 @@ async def is_visible_by_path(client: Client, path: list[str]):
         return False
 
 
+async def log_window_tree(client: Client, path: list[str], label: str, max_depth: int = 6):
+    # Debug aid: logs the UI subtree at `path` (name, type, visibility, text) to find button paths.
+    window = await get_window_from_path(client.root_window, path)
+    if window is False:
+        return
+
+    lines = []
+
+    async def _walk(w, depth):
+        try:
+            name = await w.name()
+            type_name = await w.maybe_read_type_name()
+            visible = await w.is_visible()
+            try:
+                text = (await w.maybe_text())[:80]
+            except Exception:
+                text = ""
+            lines.append(f"{'  ' * depth}{name!r} <{type_name}> visible={visible} text={text!r}")
+            if depth < max_depth:
+                for child in await w.children():
+                    await _walk(child, depth + 1)
+        except Exception as e:
+            lines.append(f"{'  ' * depth}<read error: {e!r}>")
+
+    await _walk(window, 0)
+    logger.info(f"[window_tree] {label}\n" + "\n".join(lines))
+
+
+# Menu entries that open a shop/trainer rather than a quest offer; clicking them would just open another menu.
+_NPC_SERVICE_WORDS = ("shop", "vendor", "training", "trainer", "bank", "store", "merchant", "crafting")
+
+
+async def click_next_npc_quest_option(client: Client, tried: set[str]) -> bool:
+    # Clicks the first untried quest entry in the NPCServicesWin menu; returns False when none are left.
+    menu = await get_window_from_path(client.root_window, npc_services_path)
+    if menu is False:
+        return False
+
+    for button in await menu.get_windows_with_name("OptionButton"):
+        if not await button.is_visible():
+            continue
+        text = await button.maybe_text()
+        if text in tried or any(word in text.lower() for word in _NPC_SERVICE_WORDS):
+            continue
+        tried.add(text)
+        logger.debug(f"[side_quest] opening NPC menu entry {text!r}")
+        async with client.mouse_handler:
+            await client.mouse_handler.click_window(button)
+        return True
+
+    return False
+
+
 async def read_control_checkbox_text(checkbox: Window) -> str:
     return await checkbox.read_wide_string_from_offset(616)
 
@@ -1248,13 +1301,17 @@ async def wait_for_visible_by_path(client: Client, path: List[str], wait_for_not
 
 async def try_task_coro(coro: Coroutine, clients: List[Client], deactive_mouseless: bool = False):
     task_coro = coro
+    task_name = getattr(coro, '__name__', repr(coro))
     max_retries = 10
+    logger.debug(f'Task {task_name} starting')
     for attempt in range(max_retries + 1):
         try:
             await task_coro()
+            logger.debug(f'Task {task_name} finished')
             return
 
         except asyncio.CancelledError:
+            logger.debug(f'Task {task_name} cancelled')
             for p in clients:
                 p.feeding_pet_status = False
             await asyncio.gather(*[attempt_deactivate_dance_hook(p) for p in clients])
@@ -1262,10 +1319,15 @@ async def try_task_coro(coro: Coroutine, clients: List[Client], deactive_mousele
 
         except (wizwalker.errors.MemoryInvalidated, wizwalker.errors.ExceptionalTimeout):
             if attempt < max_retries:
-                logger.debug(f'Task {task_coro} encountered a memory error, retrying ({attempt + 1}/{max_retries})...')
+                logger.opt(exception=True).debug(f'Task {task_name} encountered a memory error, retrying ({attempt + 1}/{max_retries})...')
                 await asyncio.sleep(1)
             else:
-                logger.error(f'Task {task_coro} exceeded max retries ({max_retries}), giving up.')
+                logger.opt(exception=True).error(f'Task {task_name} exceeded max retries ({max_retries}), giving up.')
+
+        except Exception:
+            # Anything else used to end the task silently; keep the traceback.
+            logger.exception(f'Task {task_name} crashed')
+            return
 
 
 def index_with_str(input_str, desired_str: str) -> int:

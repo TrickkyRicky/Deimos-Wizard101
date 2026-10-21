@@ -57,6 +57,7 @@ class GUICommandType(Enum):
     RebindHotkey = auto()        # GUI -> Backend: (action_id, key, modifiers) or (action_id, None, None)
     FriendTeleport = auto()      # GUI -> Backend
     ToggleDialogueSideQuests = auto()  # GUI -> Backend
+    ToggleZoneLock = auto()  # GUI -> Backend
 
     InvokeAction = auto()       # Backend -> GUI: action_id (triggers button callback)
 

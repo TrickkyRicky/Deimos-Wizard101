@@ -115,6 +115,7 @@ DEFAULT_HOTKEYS = {
     "toggle_auto_pet": None,
     "toggle_auto_potion": None,
     "toggle_drops": None,
+    "toggle_zone_lock": None,
 }
 
 # Maps ini key names -> action_id

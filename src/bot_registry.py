@@ -4,7 +4,9 @@ All functions here are synchronous (requests-based) and meant to be called via
 asyncio.to_thread from the backend so the GUI never blocks on network I/O.
 """
 
+import os
 import re
+import sys
 from urllib.parse import quote, urlencode
 
 import requests
@@ -109,12 +111,77 @@ def search_compatible_bots(zone: str, client_count) -> list[dict]:
 
 def fetch_bot_text(path: str) -> str:
     """Download a bot's .txt content given its repo-relative path from the registry."""
+    if path.startswith(bundled_prefix):
+        return _read_bundled_bot(path)
     resp = requests.get(f'{registry_raw_base}/{quote(path, safe="/")}', timeout=_request_timeout)
     resp.raise_for_status()
     # raw.githubusercontent serves UTF-8 but often without a charset header, which
     # makes requests fall back to ISO-8859-1 and mangle non-ASCII text.
     resp.encoding = 'utf-8'
     return resp.text
+
+
+# Bots shipped inside the app (bundled_bots/<zone path>/<Name>.txt). They use the same
+# metadata header as registry bots and work offline.
+bundled_prefix: str = 'bundled:'
+
+
+def bundled_dir() -> str:
+    base = getattr(sys, '_MEIPASS', None) or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, 'bundled_bots')
+
+
+def _read_bundled_bot(path: str) -> str:
+    root = os.path.realpath(bundled_dir())
+    full = os.path.realpath(os.path.join(root, path[len(bundled_prefix):]))
+    if os.path.commonpath([root, full]) != root:
+        raise ValueError(f'Bundled bot path escapes the bundled folder: {path}')
+    with open(full, encoding='utf-8') as f:
+        return f.read()
+
+
+def search_bundled_bots(zone: str, client_count) -> list[dict]:
+    """Bundled bots whose @zone is the current zone or General, filtered by client count."""
+    root = bundled_dir()
+    results = []
+    for dirpath, _dirs, files in os.walk(root):
+        for filename in sorted(files):
+            if not filename.lower().endswith('.txt'):
+                continue
+            full = os.path.join(dirpath, filename)
+            try:
+                with open(full, encoding='utf-8') as f:
+                    metadata, _body = split_bot_metadata(f.read())
+            except OSError:
+                continue
+            bot_zone = (metadata.get('zone') or '').strip()
+            if bot_zone.split('/')[0] != 'General' and bot_zone.lower() != (zone or '').lower():
+                continue
+            if client_count is not None and not clients_compatible(metadata.get('clients'), client_count):
+                continue
+            bot = dict(metadata)
+            bot['name'] = metadata.get('name') or os.path.splitext(filename)[0]
+            bot['author'] = (metadata.get('author') or '').strip() or 'Bundled'
+            bot['path'] = bundled_prefix + os.path.relpath(full, root).replace(os.sep, '/')
+            bot['is_general'] = bot_zone.split('/')[0] == 'General'
+            results.append(bot)
+    results.sort(key=lambda b: (b['is_general'], b['name'].lower()))
+    return results
+
+
+def search_with_bundled(zone: str, client_count) -> list[dict]:
+    """Registry results plus bundled bots; bundled bots still show when offline."""
+    bundled = search_bundled_bots(zone, client_count)
+    try:
+        remote = search_compatible_bots(zone, client_count)
+    except requests.RequestException:
+        if not bundled:
+            raise
+        remote = []
+    seen = {b.get('name') for b in bundled}
+    merged = bundled + [b for b in remote if b.get('name') not in seen]
+    merged.sort(key=lambda b: b.get('is_general', False))
+    return merged
 
 
 # Metadata header fields, in the order they are emitted into a published bot.

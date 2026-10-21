@@ -17,6 +17,15 @@ from src.utils import *
 from src.paths import *
 from thefuzz import fuzz
 
+# Set by Deimos.py; called (sync) when a zone-locked client has left its locked area.
+zone_lock_exit_callback = None
+
+
+def zone_area_key(zone_name: str) -> str:
+    # "Wysteria/Interiors/PA_Dorm" -> "Wysteria/PA"; sub-zones of one area share the world and the name prefix.
+    parts = zone_name.split('/')
+    return f"{parts[0]}/{parts[-1].split('_')[0]}"
+
 
 class Quester():
     def __init__(self, client: Client, clients: list[Client], leader_pid: int):
@@ -1328,6 +1337,7 @@ class Quester():
             if self.client.use_potions:
                 await auto_potions(self.client, True, buy=self.client.buy_potions)
 
+            await self.enable_quest_helper()
             quest_xyz = await self.client.quest_position.position()
 
             if self.client.auto_pet_status and not auto_pet_disabled:
@@ -1406,14 +1416,59 @@ class Quester():
     async def auto_quest(self, ignore_pet_level_up: bool, play_dance_game: bool):
         while self.client.questing_status:
             await asyncio.sleep(1)
+            if await self.left_locked_area():
+                return
             await self.auto_quest_solo(ignore_pet_level_up=ignore_pet_level_up, play_dance_game=play_dance_game)
+
+    async def enable_quest_helper(self):
+        # With the helper disallowed the game stops updating the arrow, so quest_position can be stale rather than zero.
+        tried = self.client.__dict__.setdefault('helper_checked_goals', set())
+        try:
+            key = (await self.client.quest_id(), await self.client.goal_id())
+            if key in tried:
+                return
+            tried.add(key)
+
+            quest_id = key[0]
+            quest = (await (await self.client.quest_manager()).quest_data()).get(quest_id)
+            if quest is None:
+                logger.info(f"[quest_helper] tracked quest {quest_id} not found in quest data")
+                return
+
+            try:
+                name = await self.client.cache_handler.get_langcode_name(await quest.name_lang_key())
+            except Exception:
+                name = await quest.name_lang_key()
+            permit = await quest.permit_quest_helper()
+            goals = [(gid, await g.goal_status(), await g.no_quest_helper(), await g.goal_destination_zone()) for gid, g in (await quest.goal_data()).items()]
+            logger.info(f"[quest_helper] quest {quest_id} {name!r} goal_id={key[1]} permit_quest_helper={permit} goals(id, done, no_helper, zone)={goals}")
+
+            if not permit:
+                await quest.write_permit_quest_helper(True)
+                logger.info(f"[quest_helper] enabled permit_quest_helper for quest {quest_id}")
+        except Exception as e:
+            logger.debug(f"Could not check quest helper flag: {e!r}")
+
+    async def left_locked_area(self) -> bool:
+        locked_key = getattr(self.client, 'zone_lock_key', None)
+        if locked_key is None or await self.client.is_loading():
+            return False
+
+        zone = await self.client.zone_name()
+        if zone_area_key(zone) == locked_key:
+            return False
+
+        logger.info(f"Client {self.client.title} left locked area {locked_key} (now in {zone}) - stopping questing.")
+        if zone_lock_exit_callback is not None:
+            zone_lock_exit_callback()
+        return True
 
 
 
 async def is_free_leader_questing(client: Client):
     # Returns True if not in combat, loading screen, dialogue, or forced animation dialogue.
     dialogue_text = await read_dialogue_text(client)
-    return not any([await client.is_loading(), await client.in_battle(), await is_visible_by_path(client, advance_dialog_path), client.entity_detect_combat_status, (dialogue_text != '')])
+    return not any([await client.is_loading(), await client.in_battle(), await is_visible_by_path(client, advance_dialog_path), client.entity_detect_combat_status, (dialogue_text != ''), getattr(client, 'npc_menu_active', False)])
 
 
 async def read_dialogue_text(p: Client) -> str:

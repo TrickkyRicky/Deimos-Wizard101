@@ -45,12 +45,26 @@ from src.config_combat import (
 )
 from src.deimoslang import vm
 from src.drop_logger import logging_loop
+from src.log_setup import (
+    install_loop_exception_handler,
+    log_startup_banner,
+    setup_logging,
+)
 from src.entity_collision import get_world_display_name, get_zone_display_name
 from src.gui import GUIKeys
 from src.gui_inputs import param_input, trunc
-from src.paths import advance_dialog_path, decline_quest_path, play_button_path
+from src.paths import (
+    advance_dialog_path,
+    cancel_multiple_quest_menu_path,
+    decline_quest_path,
+    dialog_main_path,
+    npc_services_path,
+    play_button_path,
+    quest_name_path,
+)
 from src.questing import Quester
-from src.settings_manager import DeimosSettings
+import src.questing as quest_mod
+from src.settings_manager import DeimosSettings, running_under_wine
 from src.sigil import Sigil
 from src.sprinty_client import SprintyClient
 
@@ -61,11 +75,14 @@ from src.tokenizer import tokenize
 from src.utils import (  # , assign_pet_level
     auto_potions,
     auto_potions_force_buy,
+    click_next_npc_quest_option,
+    click_window_by_path,
     collect_wisps_with_limit,
     get_window_from_path,
     index_with_str,
     is_free,
     is_visible_by_path,
+    log_window_tree,
     override_wiz_install_using_handle,
     read_webpage,
     to_world,
@@ -649,6 +666,13 @@ async def main():
     logger.info(
         f"Deimos v{tool_version}"
     )
+    install_loop_exception_handler(asyncio.get_running_loop())
+    log_startup_banner(
+        tool_version,
+        wine=running_under_wine(),
+        rich_presence=rpc_status,
+        locale=gui_langcode,
+    )
     listener = HotkeyListener()
     foreground_client: Client = None
     background_clients = []
@@ -775,7 +799,6 @@ async def main():
 
         if not freecam_status:
             if dialogue_task is not None and not dialogue_task.cancelled():
-                side_quest_status = False
                 dialogue_task.cancel()
                 dialogue_task = None
                 logger.debug("Dialogue hotkey pressed, disabling auto dialogue.")
@@ -813,6 +836,27 @@ async def main():
                 ("SideQuestAcceptStatus", status_str),
             )
         )
+
+    async def toggle_zone_lock_hotkey():
+        locked = any(getattr(c, "zone_lock_key", None) for c in walker.clients)
+        for c in walker.clients:
+            c.zone_lock_key = None if locked else quest_mod.zone_area_key(await c.zone_name())
+
+        status_str = "Disabled" if locked else "Enabled"
+        keys = [getattr(c, "zone_lock_key", None) for c in walker.clients]
+        logger.debug(f"Zone lock hotkey pressed, zone lock {status_str} {keys if not locked else ''}")
+        gui_send_queue.put(
+            deimosgui.GUICommand(
+                deimosgui.GUICommandType.UpdateWindow,
+                ("ZoneLockStatus", status_str),
+            )
+        )
+
+    def _stop_questing_after_zone_exit():
+        if questing_status:
+            asyncio.create_task(toggle_questing_hotkey())
+
+    quest_mod.zone_lock_exit_callback = _stop_questing_after_zone_exit
 
     async def toggle_sigil_hotkey():
         global sigil_task
@@ -1205,8 +1249,35 @@ async def main():
     async def dialogue_loop():
         # auto advances dialogue for every client, individually and concurrently
         async def async_dialogue(client: Client):
+            dumped_dialog = False
+            tried_menu_entries: set[str] = set()
+            menu_gone_since = time.time()
+            client.npc_menu_active = False
             while True:
                 if not freecam_status:
+                    if side_quest_status:
+                        dialog_up = await is_visible_by_path(client, advance_dialog_path)
+                        # TEMP: capture the quest offer UI tree once per appearance to verify the accept buttons
+                        if dialog_up and not dumped_dialog:
+                            await log_window_tree(client, dialog_main_path, "wndDialogMain")
+                        dumped_dialog = dialog_up
+
+                        # NPCs with several quests/services show a menu first; open each quest entry, then cancel it
+                        if await is_visible_by_path(client, npc_services_path):
+                            client.npc_menu_active = True
+                            menu_gone_since = time.time()
+                            if not dialog_up:
+                                if await click_next_npc_quest_option(client, tried_menu_entries):
+                                    await asyncio.sleep(1.0)
+                                else:
+                                    await click_window_by_path(client, cancel_multiple_quest_menu_path)
+                                    await asyncio.sleep(0.5)
+                        else:
+                            client.npc_menu_active = False
+                            # the menu hides while an offer dialog is open, so only forget entries once it's been gone a while
+                            if time.time() - menu_gone_since > 5.0:
+                                tried_menu_entries.clear()
+
                     if await is_visible_by_path(client, advance_dialog_path):
                         if (
                             await is_visible_by_path(client, decline_quest_path)
@@ -2395,6 +2466,7 @@ async def main():
                 # Eat as much as the queue gives us. We will be freed by exception
                 while True:
                     com = recv_queue.get_nowait()
+                    logger.debug(f"GUI command received: {com.com_type.name}")
                     match com.com_type:
                         case deimosgui.GUICommandType.Close:
                             if len(walker.clients) != 0:
@@ -2822,6 +2894,13 @@ async def main():
                                 )
                                 continue
                             await toggle_dialogue_side_quests_hotkey()
+                        case deimosgui.GUICommandType.ToggleZoneLock:
+                            if not walker.clients:
+                                logger.info(
+                                    "This GUI option requires hooks to be active, skipping."
+                                )
+                                continue
+                            await toggle_zone_lock_hotkey()
                         case deimosgui.GUICommandType.RebindHotkey:
                             action_id, new_key, new_mods = com.data
                             # Remove old binding from listener if active
@@ -3354,7 +3433,7 @@ async def main():
                                 search_count = client_count
                                 try:
                                     found_bots = await asyncio.to_thread(
-                                        bot_registry.search_compatible_bots,
+                                        bot_registry.search_with_bundled,
                                         current_zone,
                                         search_count,
                                     )
@@ -3938,7 +4017,6 @@ async def main():
                     rpc = AioPresence(1000159655357587566)
                     await rpc.connect()
                 except Exception as e:
-                    logger.debug(f"Discord RPC connection failed: {e}")
                     await _close_rpc(rpc)
                     rpc = None
                     await asyncio.sleep(15)
@@ -4363,6 +4441,43 @@ async def main():
                 try_task_coro(auto_pet_loop, walker.clients, True)
             )
 
+    async def state_heartbeat():
+        # Periodic snapshot so stalls can be diagnosed from the log alone.
+        while True:
+            await asyncio.sleep(30)
+            toggles = (
+                ("questing", questing_task),
+                ("combat", combat_task),
+                ("dialogue", dialogue_task),
+                ("sigil", sigil_task),
+                ("auto_pet", auto_pet_task),
+                ("bot", bot_task),
+            )
+            active = [name for name, task in toggles if task is not None and not task.done()]
+            logger.debug(
+                f"[heartbeat] clients={len(walker.clients)} active={active} "
+                f"side_quests={side_quest_status} freecam={freecam_status}"
+            )
+            for c in list(walker.clients):
+                try:
+                    zone = await c.zone_name()
+                    pos = await c.body.position()
+                    in_battle = await c.in_battle()
+                    loading = await c.is_loading()
+                    quest_id = await c.quest_id()
+                    goal_id = await c.goal_id()
+                    quest_win = await get_window_from_path(c.root_window, quest_name_path)
+                    quest_txt = ""
+                    if quest_win:
+                        quest_txt = (await quest_win.maybe_text()).replace("<center>", "").replace("</center>", "")[:120]
+                    logger.debug(
+                        f"[heartbeat] {c.title}: zone={zone} pos=({pos.x:.0f}, {pos.y:.0f}, {pos.z:.0f}) "
+                        f"battle={in_battle} loading={loading} quest_id={quest_id} goal_id={goal_id} "
+                        f"zone_lock={getattr(c, 'zone_lock_key', None)} quest_hud={quest_txt!r}"
+                    )
+                except Exception as e:
+                    logger.debug(f"[heartbeat] {c.title}: state read failed: {e!r}")
+
     try:
         all_tasks["foreground_client_switching"] = asyncio.create_task(
             foreground_client_switching()
@@ -4386,6 +4501,7 @@ async def main():
             anti_afk_questing_loop()
         )
         all_tasks["ban_watcher"] = asyncio.create_task(ban_watcher())
+        all_tasks["state_heartbeat"] = asyncio.create_task(state_heartbeat())
         all_tasks["tool_active"] = asyncio.create_task(tool_active())
         all_tasks["gui"] = gui_task
 
@@ -4449,11 +4565,10 @@ def bool_to_string(input: bool):
 
 
 if __name__ == "__main__":
-    current_log = logger.add(
-        f"logs/{tool_name} - {generate_timestamp()}.log",
-        encoding="utf-8",
-        enqueue=True,
-        backtrace=True,
+    current_log = setup_logging(
+        "logs",
+        f"{tool_name} - {generate_timestamp()}",
+        prefix=f"{tool_name} - ",
     )
 
     # Set up GUI queues before starting anything
