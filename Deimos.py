@@ -33,7 +33,7 @@ from wizwalker.memory.memory_objects.camera_controller import (
 from wizwalker.memory.memory_objects.window import Window
 from wizwalker.utils import get_all_wizard_handles, get_foreground_window
 
-from src import bot_registry, discsdk, updater, wizpatch_runner
+from src import bot_registry, discsdk, mac_updater, updater, wizpatch_runner
 from src import gui as deimosgui
 from src.auto_pet import nomnom
 from src.client_resizing import ClientResizingManager
@@ -327,18 +327,36 @@ def build_account_list_payload() -> list[dict]:
 
 # Holds the ReleaseInfo for an update that has been found but not yet installed.
 available_release = None
+available_updater = None
 
 
-async def _check_for_updates(manual: bool = False):
+async def _check_for_updates(manual: bool = False, mac: bool | None = None):
     """Check GitHub for a newer release. Prompts the GUI (or auto-installs).
 
     ``manual`` distinguishes the user clicking "Check for Updates" (which always
     reports a result) from the silent startup check (which stays quiet unless an
-    update is found).
+    update is found). ``mac`` picks the macOS zip updater (True), the upstream
+    Deimos.exe updater (False), or whichever applies to this install (None).
     """
-    global available_release
+    global available_release, available_updater
 
-    if not updater.is_frozen():
+    if mac is None:
+        mac = mac_updater.is_supported()
+    if mac and not mac_updater.is_supported():
+        logger.debug("macOS update check skipped — this is not a packaged macOS build.")
+        if manual:
+            gui_send_queue.put(
+                deimosgui.GUICommand(
+                    deimosgui.GUICommandType.UpdateProgress,
+                    ("error", "macOS updates only work in the downloaded zip build, not in a git checkout."),
+                )
+            )
+        return
+
+    upd = mac_updater if mac else updater
+    local_version = mac_updater.current_version() if mac else tool_version
+
+    if not mac and not updater.is_frozen():
         logger.debug("Update check skipped — not running as a frozen build.")
         if manual:
             gui_send_queue.put(
@@ -348,7 +366,10 @@ async def _check_for_updates(manual: bool = False):
             )
         return
 
-    info = await asyncio.to_thread(updater.get_latest_release, tool_author, repo_name)
+    if mac:
+        info = await asyncio.to_thread(mac_updater.get_latest_release)
+    else:
+        info = await asyncio.to_thread(updater.get_latest_release, tool_author, repo_name)
     if info is None:
         logger.debug("Update check returned no release info.")
         if manual:
@@ -359,7 +380,7 @@ async def _check_for_updates(manual: bool = False):
             )
         return
 
-    if updater.is_newer(info.version, tool_version):
+    if upd.is_newer(info.version, local_version):
         if not info.exe_url:
             logger.warning(
                 f"v{info.version} is available but has no downloadable exe asset."
@@ -377,7 +398,8 @@ async def _check_for_updates(manual: bool = False):
             return
 
         available_release = info
-        logger.info(f"Update available: v{info.version} (current v{tool_version}).")
+        available_updater = upd
+        logger.info(f"Update available: v{info.version} (current v{local_version}).")
         if auto_install_updates and not manual:
             await _do_apply_update()
         else:
@@ -388,11 +410,11 @@ async def _check_for_updates(manual: bool = False):
                 )
             )
     else:
-        logger.debug(f"Deimos is up to date (v{tool_version}).")
+        logger.debug(f"Deimos is up to date (v{local_version}).")
         if manual:
             gui_send_queue.put(
                 deimosgui.GUICommand(
-                    deimosgui.GUICommandType.UpdateProgress, ("uptodate", tool_version)
+                    deimosgui.GUICommandType.UpdateProgress, ("uptodate", local_version)
                 )
             )
 
@@ -409,6 +431,8 @@ async def _do_apply_update():
         )
         return
 
+    upd = available_updater
+
     def _progress(pct):
         gui_send_queue.put(
             deimosgui.GUICommand(
@@ -422,7 +446,7 @@ async def _do_apply_update():
         )
     )
     path = await asyncio.to_thread(
-        updater.download_update, info.exe_url, info.sha256, progress_cb=_progress
+        upd.download_update, info.exe_url, info.sha256, progress_cb=_progress
     )
     if path is None:
         gui_send_queue.put(
@@ -446,7 +470,7 @@ async def _do_apply_update():
     except Exception as e:
         logger.warning(f"Error during pre-update shutdown: {e}")
 
-    if not updater.apply_and_relaunch(path):
+    if not upd.apply_and_relaunch(path):
         gui_send_queue.put(
             deimosgui.GUICommand(
                 deimosgui.GUICommandType.UpdateProgress,
@@ -2479,7 +2503,9 @@ async def main():
                                 os._exit(0)
                             raise deimosgui.ToolClosedException
                         case deimosgui.GUICommandType.CheckForUpdates:
-                            asyncio.create_task(_check_for_updates(manual=True))
+                            asyncio.create_task(_check_for_updates(manual=True, mac=False))
+                        case deimosgui.GUICommandType.CheckForMacUpdates:
+                            asyncio.create_task(_check_for_updates(manual=True, mac=True))
                         case deimosgui.GUICommandType.ApplyUpdate:
                             asyncio.create_task(_do_apply_update())
                         case deimosgui.GUICommandType.ToggleOption:

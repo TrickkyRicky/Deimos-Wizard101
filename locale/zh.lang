@@ -164,6 +164,7 @@ tooltip_wiki_hotkeys=维基：快捷键
 tooltip_source_code=源代码
 tooltip_discord=Discord 社区
 check_for_updates=检查更新
+check_for_mac_updates=检查 macOS 更新
 tooltip_wiki_camera=维基：镜头
 tooltip_wiki_utilities=维基：实用工具
 tooltip_wiki_stats=维基：状态

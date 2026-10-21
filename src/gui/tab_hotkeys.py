@@ -8,6 +8,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 
 from src.gui.commands import GUICommand, GUICommandType, GUIKeys
+from src import mac_updater
+from src.settings_manager import running_under_wine
 from src.gui.helpers import (
     centered_label, repo_icon_btn, resource_path,
     toggle_callback, teleport_callback,
@@ -350,11 +352,27 @@ def build_hotkeys_tab(ctx):
     version_label.setOpenExternalLinks(True)
     info_layout.addWidget(version_label)
 
+    if running_under_wine():
+        mac_version = mac_updater.build_version()
+        mac_text = f"macOS build v{mac_version}" if mac_version else "macOS build"
+        if not mac_updater.is_supported():
+            mac_text += " (dev)"
+        mac_version_label = QLabel(mac_text)
+        mac_version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_layout.addWidget(mac_version_label)
+
     check_updates_btn = QPushButton(tl('check_for_updates'))
     check_updates_btn.clicked.connect(
         lambda: send_queue.put(GUICommand(GUICommandType.CheckForUpdates))
     )
     info_layout.addWidget(check_updates_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    if running_under_wine():
+        mac_updates_btn = QPushButton(tl('check_for_mac_updates'))
+        mac_updates_btn.clicked.connect(
+            lambda: send_queue.put(GUICommand(GUICommandType.CheckForMacUpdates))
+        )
+        info_layout.addWidget(mac_updates_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
     repo_links_row = QHBoxLayout()
     repo_links_row.setSpacing(4)

@@ -164,6 +164,7 @@ tooltip_wiki_hotkeys=Wiki: Hotkeys
 tooltip_source_code=Source Code
 tooltip_discord=Discord
 check_for_updates=Check for Updates
+check_for_mac_updates=Check for macOS Updates
 tooltip_wiki_camera=Wiki: Camera
 tooltip_wiki_utilities=Wiki: Utilities
 tooltip_wiki_stats=Wiki: Stats
