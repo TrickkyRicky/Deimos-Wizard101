@@ -68,7 +68,11 @@ class UntilInfo:
 
 
 class VM:
-    def __init__(self, clients: list[Client]):
+    def __init__(self, clients: list[Client], feature_toggles: dict | None = None):
+        # Maps a feature name ("combat", "dialogue") to an async callable taking
+        # True (enable), False (disable) or None (flip). Supplied by the host app so
+        # scripts share state with the regular hotkeys.
+        self.feature_toggles = feature_toggles or {}
         self._clients = upgrade_clients(clients) # guarantee it's usable
         self.program: list[Instruction] = []
         self.running = False
@@ -1574,6 +1578,16 @@ class VM:
                 async with asyncio.TaskGroup() as tg:
                     for client in clients:
                         tg.create_task(self.select_friend_from_list(client, friend_name))
+            case "toggle_combat" | "toggle_dialogue":
+                feature = "combat" if instruction.data[1] == "toggle_combat" else "dialogue"
+                handler = self.feature_toggles.get(feature)
+                if handler is None:
+                    raise VMError(f"Toggling {feature} is not available in this context")
+                args = instruction.data[2]
+                desired = None  # no argument means flip the current state
+                if args:
+                    desired = str(args[0]).lower() == "on"
+                await handler(desired)
             case _:
                 raise VMError(f"Unimplemented deimos call: {instruction}")
 

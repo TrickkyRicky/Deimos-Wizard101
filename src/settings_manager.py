@@ -31,7 +31,9 @@ DEFAULT_SETTINGS = {
     "use_anti_afk": True,
     "buy_potions": True,
     # [gui]
-    "on_top": True,
+    # Off by default under Wine: a topmost Wine window floats above every macOS app.
+    # The pin button in the title bar still toggles it and saves the choice.
+    "on_top": not running_under_wine(),
     "locale": "en",
     "font": "Segoe UI",
     "font_size": 9,

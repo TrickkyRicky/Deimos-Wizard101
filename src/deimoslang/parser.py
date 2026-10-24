@@ -921,8 +921,12 @@ class Parser:
                 result.kind = CommandKind.restart_bot
                 self.i += 1
                 self.end_line()
-            case TokenKind.command_toggle_combat:
-                result.kind = CommandKind.toggle_combat
+            case TokenKind.command_toggle_combat | TokenKind.command_toggle_dialogue:
+                result.kind = (
+                    CommandKind.toggle_combat
+                    if self.tokens[self.i].kind == TokenKind.command_toggle_combat
+                    else CommandKind.toggle_dialogue
+                )
                 self.i += 1
                 if self.tokens[self.i].kind in [TokenKind.logical_on, TokenKind.logical_off]:
                     result.data = [self.expect_consume_any([TokenKind.logical_on, TokenKind.logical_off]).literal]

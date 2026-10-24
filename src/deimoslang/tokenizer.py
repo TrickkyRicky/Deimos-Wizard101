@@ -99,6 +99,7 @@ class TokenKind(Enum):
     command_set_quest = auto()
     command_set_zone = auto()
     command_toggle_combat = auto()
+    command_toggle_dialogue = auto()
     command_restart_bot = auto()
     command_move_cursor = auto()
     command_move_cursor_window = auto() 
@@ -514,6 +515,8 @@ class Tokenizer:
                                         put_simple(TokenKind.command_set_zone, full)
                                     case "togglecombat" | "togglecombatmode":
                                         put_simple(TokenKind.command_toggle_combat, full)
+                                    case "toggledialogue" | "toggledialog" | "toggleautodialogue":
+                                        put_simple(TokenKind.command_toggle_dialogue, full)
                                     case "cursor" | "movecursor" | "mousexy" | "movemouse":
                                         put_simple(TokenKind.command_move_cursor, full)
                                     case "cursorwindow" | "mousewindow":

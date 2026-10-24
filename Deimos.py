@@ -849,6 +849,28 @@ async def main():
                     try_task_coro(dialogue_loop, walker.clients, True)
                 )
 
+    async def set_combat_from_script(desired: bool | None):
+        # Same task/state the combat hotkey uses, so the hotkey can still flip it afterwards.
+        global combat_task
+        if combat_task is not None and combat_task.done():
+            combat_task = None
+        enabled = combat_task is not None
+        if desired is None or desired != enabled:
+            await toggle_combat_hotkey(False)
+
+    async def set_dialogue_from_script(desired: bool | None):
+        global dialogue_task
+        if dialogue_task is not None and dialogue_task.done():
+            dialogue_task = None
+        enabled = dialogue_task is not None
+        if desired is None or desired != enabled:
+            await toggle_dialogue_hotkey()
+
+    script_feature_toggles = {
+        "combat": set_combat_from_script,
+        "dialogue": set_dialogue_from_script,
+    }
+
     async def toggle_dialogue_side_quests_hotkey():
         global side_quest_status
         side_quest_status ^= True
@@ -3364,7 +3386,7 @@ async def main():
                                 logger.debug("Started Bot")
                                 if expert_mode:
                                     while True:
-                                        v = vm.VM(walker.clients)
+                                        v = vm.VM(walker.clients, script_feature_toggles)
                                         try:
                                             v.load_from_text(command_data)
                                             v.running = True

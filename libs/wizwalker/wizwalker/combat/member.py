@@ -115,9 +115,12 @@ class CombatMember:
         name_window = await self.get_name_text_window()
         return await name_window.maybe_text()
 
-    # TODO: finish
-    # async def school_name(self) -> str:
-    #     pass
+    async def school_id(self) -> int:
+        """
+        This member's primary school id
+        """
+        part = await self.get_participant()
+        return await part.primary_magic_school_id()
 
     async def owner_id(self) -> int:
         """

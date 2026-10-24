@@ -1,0 +1,95 @@
+###deimos_expertmode
+# Queen Calypso Farming
+# Enable Auto-Dialogue
+# go to queen calypso sigil and press run script
+
+# Combat config: heal with Satyr/Pixie when low, otherwise blade, then Gargantuan on Ratatoskr's Spin and hit the boss
+loadplaystyle `?(self.health < 50%) Satyr @ self | ?(self.health < 50%) Pixie @ self | any<blade> @ self | any<mod_damage> @ spell(any<damage>) & any<damage> @ boss | any<damage> @ boss | pass`
+togglecombat on
+toggledialogue on
+
+block enter {
+    # runs one time
+    # Enter Cave
+    p1 tp XYZ(450.902, 28636.333, -290.101)
+    sleep 1
+    if p1 windowvisible ['WorldView', 'NPCRangeWin', 'imgBackground'] {
+        print Pressing X...
+        sendkey X, 0.1
+        sendkey X, 0.1
+        sendkey X, 0.1
+        sleep 13
+    }
+
+}
+
+
+block useLever {
+    p1 tp XYZ(3256.328, -10063.184, -1014.337)
+    sleep 1
+    # first press
+    print "First Press"
+    p1 sendkey X, 0.1
+    sleep 1
+    p1 sendkey X, 0.1
+    sleep 1
+    # teleport away for 2nd press
+    p1 tp XYZ(3213.051, -10547.151, -1015.581)
+    sleep 1
+    # teleport back
+    p1 tp XYZ(3256.328, -10063.184, -1014.337)
+    print "Second Press"
+    sleep 1
+    p1 sendkey X, 0.1
+    sleep 1
+    p1 sendkey X, 0.1
+    sleep 1
+    p1 sendkey X, 0.1
+    sleep 1
+}
+
+block farm {
+    # use lever
+    print "Spawning boss..."
+    call useLever
+    # teleport back to boss
+    print "Teleporting back to boss..."
+    mass entitytp CL-UndeadMaiden-Boss-R10
+    print "In Combat..."
+    waitforcombat
+    while p1 incombat {
+        if p1 healthbelow 20% {
+            print Low health, using potion...
+            p1 usepotion
+            sleep 3
+        }
+        sleep 1
+    }
+    print "Combat Complete"
+    sleep 1
+    mass presskey A, 0.5
+    sleep 0.5
+    mass presskey D, 0.5
+    sleep 0.5
+       if any healthbelow 30% {
+            times 30 {
+                if mass healthabove 30% {
+                    break
+                }
+                print Waiting for p1 to heal...
+                mass buypotions ifneeded
+                mass usepotion
+                sleep 1
+            }
+        }
+}
+
+loop {
+    if p1 inzone Celestia/CL_Z10_Kingdom_Of_The_Crabs {
+        call enter
+    }
+    if p1 inzone Celestia/Interiors/CL_Z10i3_Kingdom_Of_The_Crabs {
+        call farm
+    }
+    sleep 1
+}

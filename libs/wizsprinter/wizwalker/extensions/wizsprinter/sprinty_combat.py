@@ -24,12 +24,52 @@ from collections import Counter
 # Off by default; flip to True (or set the env var DEIMOS_COMBAT_DEBUG=1) to
 # resurface the verbose verb/predicate/dispatch traces used during development.
 import os as _os
-_DEBUG = _os.environ.get("DEIMOS_COMBAT_DEBUG", "").lower() in ("1", "true", "yes")
+import sys as _sys
+
+
+def _debug_enabled() -> bool:
+    if _os.environ.get("DEIMOS_COMBAT_DEBUG", "").lower() in ("1", "true", "yes"):
+        return True
+    # Wine does not reliably pass env vars through, so also honour a flag file
+    # next to the launched script or in the working directory.
+    dirs = [_os.getcwd()]
+    try:
+        dirs.append(_os.path.dirname(_os.path.abspath(_sys.argv[0])))
+    except Exception:
+        pass
+    return any(_os.path.exists(_os.path.join(d, "combat_debug.flag")) for d in dirs)
+
+
+_DEBUG = _debug_enabled()
+
+
+try:
+    from loguru import logger as _logger
+except ImportError:  # pragma: no cover
+    _logger = None
+
+
+def _trace(msg: str) -> None:
+    """Always-on, low-volume round decision trace (one or two lines per round)."""
+    if _logger is not None:
+        _logger.info(msg)
+    # Also write to a plain file so the trace survives logger/sink quirks under Wine.
+    try:
+        import time as _time
+        base = _os.path.dirname(_os.path.abspath(_sys.argv[0])) or _os.getcwd()
+        with open(_os.path.join(base, "combat_trace.log"), "a", encoding="utf-8") as f:
+            f.write(f"{_time.strftime('%H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
 
 
 def _dbg(msg: str) -> None:
     if _DEBUG:
-        print(msg)
+        # stdout is discarded when running under Wine, so prefer the log file.
+        if _logger is not None:
+            _logger.debug(msg)
+        else:
+            print(msg)
 
 
 async def _flatten_effect(effect, out: List, depth: int = 0):
@@ -433,6 +473,8 @@ class SprintyCombat(CombatHandler):
         self.was_pass = False
         self.had_first_round = False
         self.rel_round_offset = 0
+        self._action_log = []
+        self._cur_round = 0
         self.handle_mouseless = handle_mouseless
 
     async def handle_combat(self):
@@ -443,7 +485,14 @@ class SprintyCombat(CombatHandler):
         self.was_pass = False
         self.had_first_round = False
         self._did_deck_inspect = False  # one-shot deck dump per fight
-        await super().handle_combat()
+        self._action_log = []
+        self._cur_round = 0
+        _trace("[FIGHT] ################ combat started ################")
+        try:
+            await super().handle_combat()
+        finally:
+            _trace(f"[FIGHT] ################ combat finished; {len(self._action_log)} actions in order: "
+                   f"{' | '.join(self._action_log)}")
 
     async def get_member_named(self, name: str) -> Optional[CombatMember]:
         # Issue: #4
@@ -481,6 +530,7 @@ class SprintyCombat(CombatHandler):
 
     async def pass_button(self):
         self.was_pass = True
+        self._act("PASS")
         await super().pass_button()
 
     async def get_cards(self) -> List[CombatCard]:  # extended to sort by enchanted
@@ -887,7 +937,8 @@ class SprintyCombat(CombatHandler):
             category, disposition = self._HANGING_ATTRS[condition.attribute]
             return float(await self._count_hanging_effects(member, category, disposition))
 
-        attr_fn = getattr(member, condition.attribute, None)
+        attr_name = "school_id" if condition.attribute == "school" else condition.attribute
+        attr_fn = getattr(member, attr_name, None)
         if attr_fn is None or not callable(attr_fn):
             return None
         actual = await attr_fn()
@@ -1511,7 +1562,9 @@ class SprintyCombat(CombatHandler):
     async def try_execute_config(self, move_config: MoveConfig, willcasted: bool = False) -> bool | Tuple[bool, bool]:
         _dbg(f"[COND-DBG] try_execute_config: condition={move_config.condition}, move={move_config.move}")
         if move_config.condition is not None:
-            if not await self.evaluate_condition(move_config.condition):
+            _cond_ok = await self.evaluate_condition(move_config.condition)
+            _trace(f"[TRY]   condition {move_config.condition} -> {_cond_ok}")
+            if not _cond_ok:
                 return False
 
         if type(move_config.move) is list and type(move_config.target) is list:
@@ -1534,6 +1587,7 @@ class SprintyCombat(CombatHandler):
                     if await draw_window.is_control_grayed():
                         break
                     await self.draw_button()
+                    self._act("DRAW")
                     while await self.get_num_card_windows() == card_count:
                         await asyncio.sleep(0.1)
                     self.cur_card_count += 1
@@ -1561,22 +1615,23 @@ class SprintyCombat(CombatHandler):
                 move_config.move.card, only_enchantable=only_enchantable, multi=True
             )
             if not candidates:
-                _dbg(f"[MT-DBG] no candidates for {move_config.move.card}")
+                _trace(f"[TRY]   no castable candidates for {move_config.move.card} -> fail")
                 return False
         else:
             single = await self.try_get_spell(move_config.move.card, only_enchantable=only_enchantable)
             if single is None:
-                _dbg(f"[MT-DBG] cur_card is None for {move_config.move.card}")
+                _trace(f"[TRY]   no castable card matches {move_config.move.card} (not in hand, grayed out, or wrong pips) -> fail")
                 return False
             if single == "pass":
                 await self.pass_button()
                 return True
             candidates = [single]
+        _trace(f"[TRY]   candidates: {await self._desc_card(candidates)}")
 
         target = await self.try_get_config_target(move_config.target)
 
         if target == False:  # Wouldn't want a None to mess it up
-            _dbg(f"[MT-DBG] target is False for {move_config.target}")
+            _trace(f"[TRY]   target {move_config.target} could not be resolved -> fail")
             return False
 
         ttype = move_config.target.target_type if move_config.target else None
@@ -1586,7 +1641,8 @@ class SprintyCombat(CombatHandler):
         cur_card = None
         for cand in candidates:
             # Card has single-target damage — only compatible with enemy/boss targeting
-            if await card_requires_target_selection(cand):
+            # ("willcast"/"discard" are plain strings, not cards, so skip the check for them)
+            if not isinstance(cand, str) and await card_requires_target_selection(cand):
                 if ttype in (TargetType.type_aoe, TargetType.type_self, TargetType.type_ally):
                     _dbg(f"[MT-DBG] target_selection rejected: ttype={ttype}, card={await cand.name()}")
                     continue
@@ -1610,14 +1666,16 @@ class SprintyCombat(CombatHandler):
             break
 
         if cur_card is None:
+            _trace(f"[TRY]   every candidate rejected by target/requirement filters for {move_config.move.card} -> fail")
             if needs_post_filter:
                 _dbg(f"[REQ-DBG] no candidate passed post-filters for {move_config.move.card}")
             return False
 
         # Multi-target spell — wrap single target in list for confirm button flow.
         # Use "enemies" / "allies" targets to select all, or select(...) for specific targets.
-        is_mt = await card_is_multi_target(cur_card)
-        _dbg(f"[MT-DBG] card={await cur_card.name()}, is_multi_target={is_mt}, target={target}, target_type={type(target).__name__}")
+        # "willcast"/"discard" are plain strings (not cards), so they have no effects to inspect.
+        is_mt = False if isinstance(cur_card, str) else await card_is_multi_target(cur_card)
+        _dbg(f"[MT-DBG] card={cur_card if isinstance(cur_card, str) else await cur_card.name()}, is_multi_target={is_mt}, target={target}, target_type={type(target).__name__}")
         if is_mt:
             if target is None:
                 _dbg(f"[MT-DBG] multi-target but target is None")
@@ -1629,6 +1687,7 @@ class SprintyCombat(CombatHandler):
         if cur_card == "willcast":
             if willcasted:
                 return True
+            self._act(f"WILLCAST (pet card) target={await self._desc_target(target)}")
             spell_checkbox_windows = await self.client.root_window.get_windows_with_type("SpellCheckBox")
 
             wnd = ([x for x in spell_checkbox_windows if await x.name() == "PetCard"])[0]
@@ -1644,6 +1703,7 @@ class SprintyCombat(CombatHandler):
             return True
 
         if cur_card == "discard":
+            self._act(f"DISCARD target={await self._desc_target(target)}")
             if type(target) is list:
                 for card in target:
                     combat_card = await self.try_get_spell(card, castable=False)
@@ -1659,14 +1719,22 @@ class SprintyCombat(CombatHandler):
             return True
 
         fused = ""
+        if _DEBUG:
+            _dbg(f"[ENCH-DBG] cast={await cur_card.name()} enchant_req={move_config.move.enchant} only_enchantable={only_enchantable} already_enchanted={await cur_card.is_enchanted() if only_enchantable else 'n/a'}")
         if only_enchantable and not await cur_card.is_enchanted():
             enchant_card = await self.try_get_spell(move_config.move.enchant, only_enchants=False, castable=False)
+            if _DEBUG:
+                _dbg(f"[ENCH-DBG] enchant_card={enchant_card if isinstance(enchant_card, str) or enchant_card is None else await enchant_card.name()}")
             if enchant_card != "none":
                 if enchant_card is not None:
                     # Issue: 5. Casting wasn't that reliable
                     enchant_is_grayed = not await enchant_card.is_castable()
+                    if _DEBUG:
+                        _dbg(f"[ENCH-DBG] enchant_is_grayed={enchant_is_grayed}")
                     if enchant_is_grayed:
+                        _trace(f"[TRY]   enchant card {await self._desc_card(enchant_card)} is grayed out -> fail")
                         return False
+                    self._act(f"ENCHANT {await self._desc_card(enchant_card)} onto {await self._desc_card(cur_card)}")
                     previous_cards = await self.get_cards()
                     previous_card_names = Counter([await card.name() for card in previous_cards])
                     pre_enchant_count = len(await self.get_cards())
@@ -1696,6 +1764,7 @@ class SprintyCombat(CombatHandler):
                         fused = diff[0]
 
                 elif enchant_card is None and (isinstance(move_config.move.enchant, TemplateSpell) and not move_config.move.enchant.optional):
+                    _trace(f"[TRY]   required enchant {move_config.move.enchant} not available -> fail")
                     return False
                 
                 #elif enchant_card is None and enchant_is_grayed:
@@ -1746,12 +1815,14 @@ class SprintyCombat(CombatHandler):
                                             break
                                     if is_enchant:
                                         break
+                            self._act(f"CAST {await self._desc_card(to_cast)} -> {await self._desc_target(target)}")
                             await to_cast.cast(target, sleep_time=self.config.cast_time*2)
                             while await self.get_num_card_windows() == card_count:
                                 await asyncio.sleep(0.1)
                             self.cur_card_count -= 1
                             await asyncio.sleep(self.config.cast_time) # give it some time for card list to update
                         break
+                    self._act(f"CAST {await self._desc_card(to_cast)} -> {await self._desc_target(target)}")
                     await to_cast.cast(target, sleep_time=self.config.cast_time*2)
                     await asyncio.sleep(self.config.cast_time) # give it some time for card list to update
                     if fused:
@@ -1768,6 +1839,87 @@ class SprintyCombat(CombatHandler):
             pass # Let it happen if it happens
         return True
 
+    def _act(self, desc: str) -> None:
+        """Record an action in fight order and trace it."""
+        self._action_log.append(f"R{self._cur_round}: {desc}")
+        _trace(f"[ACT #{len(self._action_log)}] round={self._cur_round} {desc}")
+
+    async def _desc_card(self, card) -> str:
+        try:
+            if isinstance(card, str):
+                return card
+            if isinstance(card, list):
+                return "[" + ", ".join([await self._desc_card(c) for c in card]) + "]"
+            name = await card.name()
+            try:
+                if await card.is_enchanted():
+                    name += "<ench>"
+            except Exception:
+                pass
+            return name
+        except Exception as e:
+            return f"<card? {type(e).__name__}>"
+
+    async def _desc_target(self, target) -> str:
+        try:
+            if target is None:
+                return "None"
+            if isinstance(target, list):
+                return "[" + ", ".join([await self._desc_target(t) for t in target]) + "]"
+            if isinstance(target, CombatMember):
+                return f"member:{await target.name()}"
+            if isinstance(target, CombatCard):
+                return f"card:{await target.name()}"
+            return repr(target)
+        except Exception as e:
+            return f"<target? {type(e).__name__}>"
+
+    async def _trace_state(self, label: str) -> None:
+        """Dump the hand (enchant/castable flags), card counts, and every combat member."""
+        try:
+            from wizwalker.memory.memory_objects.enums import MagicSchool
+            cards = await self.get_cards()
+            hand = []
+            for c in cards:
+                flags = []
+                try:
+                    if await c.is_enchanted():
+                        flags.append("ench")
+                except Exception:
+                    pass
+                try:
+                    if not await c.is_castable():
+                        flags.append("gray")
+                except Exception:
+                    pass
+                hand.append(await c.name() + (f"<{','.join(flags)}>" if flags else ""))
+            try:
+                counts = await self.get_card_counts()
+            except Exception:
+                counts = "?"
+            _trace(f"[HAND] {label}: {len(hand)} cards (enchanted listed first) {hand} | counts(deck,discard?)={counts}")
+
+            members = await self.get_members()
+            lines = []
+            for m in members:
+                try:
+                    sid = await m.school_id()
+                    try:
+                        school = MagicSchool(sid).name
+                    except Exception:
+                        school = str(sid)
+                    role = ("ME" if await m.is_client() else ("BOSS" if await m.is_boss() else ("player" if await m.is_player() else "mob")))
+                    dead = " DEAD" if await m.is_dead() else ""
+                    lines.append(
+                        f"{await m.name()}({role},{school},hp={await m.health()}/{await m.max_health()},"
+                        f"pips={await m.normal_pips()}+{await m.power_pips()}p+{await m.shadow_pips()}s{dead})"
+                    )
+                except Exception as e:
+                    lines.append(f"<member? {type(e).__name__}>")
+            _trace(f"[MEMBERS] {label}: {lines}")
+        except Exception as e:
+            _trace(f"[HAND] {label}: state dump failed {type(e).__name__}: {e}")
+
     async def fail_turn(self):
         self.turn_adjust -= 1
         await self.pass_button()
@@ -1780,13 +1932,14 @@ class SprintyCombat(CombatHandler):
         #     await self.client.mouse_handler.activate_mouseless()
         # except wizwalker.errors.HookAlreadyActivated:
         #     pass
+        _trace("[ROUND] handle_round entered")
         async with self.client.mouse_handler:
             self.config.attach_combat(self) # For safety. Could probably also do this in handle_comba
 
             real_round = await self.round_number()
-            _dbg_castable = await self.get_castable_cards()
-            _dbg_names = [await c.name() for c in _dbg_castable]
-            _dbg(f"[MT-DBG] castable cards: {_dbg_names}")
+            self._cur_round = real_round
+            _trace(f"[ROUND] ======== ROUND {real_round} ========")
+            await self._trace_state("round start")
             await self._inspect_deck_once()
             self.cur_card_count = len(await self.get_cards()) + (await self.get_card_counts())[0]
                 
@@ -1799,6 +1952,12 @@ class SprintyCombat(CombatHandler):
                     await self.on_fizzle()
             self.was_pass = False
             current_round = (real_round - 1 + self.turn_adjust + self.rel_round_offset)
+            _trace(
+                f"[ROUND] bookkeeping: real_round={real_round} line_index={current_round} "
+                f"turn_adjust={self.turn_adjust} rel_round_offset={self.rel_round_offset} "
+                f"cur_card_count={self.cur_card_count} prev_card_count={self.prev_card_count} "
+                f"had_first_round={self.had_first_round}"
+            )
                         
             # Issue: #3. Need to make sure it's valid
             member: CombatMember = None
@@ -1809,25 +1968,37 @@ class SprintyCombat(CombatHandler):
                 )
             except wizwalker.errors.ExceptionalTimeout:
                 # TODO: Maybe make this more dramatic
+                _trace("[ROUND] client member lookup TIMED OUT -> fail_turn (pass)")
                 await self.fail_turn() # This is quite catastrophic. Use default fail for now
             
             if member is not None:
                 if await member.is_stunned():
+                    _trace("[ROUND] client is STUNNED -> fail_turn (pass)")
                     await self.fail_turn()
                 else:
+                    _rel_before = self.rel_round_offset
                     round_config = await self.config.get_real_round(real_round)
                     if round_config is None:
                         round_config = await self.config.get_relative_round(current_round)
                     else:
                         self.rel_round_offset -= 1
+                    _trace(
+                        f"[ROUND] using {'round-specific {N}' if self.rel_round_offset != _rel_before else 'rotation'} line; "
+                        f"priorities={len(round_config.priorities) if round_config is not None else None}"
+                    )
                     if round_config is not None:
-                        for p in round_config.priorities:  # go through rounds priorities
-                            if await self.try_execute_config(p):
+                        for _pi, p in enumerate(round_config.priorities):  # go through rounds priorities
+                            _trace(f"[ROUND] priority {_pi}: {p!r}")
+                            _ok = await self.try_execute_config(p)
+                            _trace(f"[ROUND] priority {_pi} -> {_ok}")
+                            if _ok:
                                 break  # we found a working priority and managed to cast it
                         else:
+                            _trace("[ROUND] no priority succeeded -> pass")
                             await self.pass_button()
                     else:  # Very bad. Probably using empty config
                         await self.config.handle_no_cards_given()
 
                 self.had_first_round = True  # might go bad on throw
                 self.prev_card_count = self.cur_card_count
+                await self._trace_state("after actions")

@@ -2,9 +2,22 @@ from typing import *
 
 from lark import Transformer
 
+from wizwalker.memory.memory_objects.enums import MagicSchool
+
 from .combat_api import *
 
 # TODO: bias for auto may be interesting
+
+
+def _normalize_school_name(name: str) -> str:
+    return name.lower().replace("_", "")
+
+
+_SCHOOLS_BY_NAME = {_normalize_school_name(s.name): s for s in MagicSchool}
+
+
+class _SchoolValue(float):
+    """Marks a condition value that came from a school name (e.g. `death`)."""
 
 
 def get_sprinty_grammar():
@@ -12,7 +25,7 @@ def get_sprinty_grammar():
             ?start: config
             config: line+
             
-            line: round_specifier? move_config [(_pipe move_config)*]? _NEWLINE?
+            line.-1: round_specifier? move_config [(_pipe move_config)*]? _NEWLINE?
             
             move_config: condition? move (_at target)? [(_and move (_at target)?)*]?
 
@@ -37,7 +50,8 @@ def get_sprinty_grammar():
             cond_op: CMP_OP
             CMP_OP: "<=" | ">=" | "!=" | "==" | "<" | ">"
 
-            cond_value: COND_NUMBER cond_percent?
+            cond_value: COND_NUMBER cond_percent? | cond_school
+            cond_school: NAME
             cond_percent: "%"
             COND_NUMBER: /\d+(\.\d+)?/
 
@@ -180,7 +194,12 @@ class TreeToConfig(Transformer):
 
     def cond_clause(self, items):
         target, attr, op, value = items
-        return Condition(target, attr, op, *value)
+        is_school_value = isinstance(value[0], _SchoolValue)
+        if is_school_value and attr != "school":
+            raise ValueError(f"School name used with '{attr}'; school names only work with the 'school' attribute")
+        if attr == "school" and op not in (ComparisonOp.eq, ComparisonOp.ne):
+            raise ValueError(f"'school' only supports == and !=, got '{op.value}'")
+        return Condition(target, attr, op, float(value[0]), value[1])
 
     def condition(self, items):
         # Filter out the COND_AND tokens (lark keeps them in the child list
@@ -235,9 +254,19 @@ class TreeToConfig(Transformer):
         return ComparisonOp(str(items[0]))
 
     def cond_value(self, items):
+        if isinstance(items[0], _SchoolValue):
+            return (items[0], False)
         value = float(items[0])
         is_percent = len(items) > 1
         return (value, is_percent)
+
+    def cond_school(self, items):
+        name = str(items[0])
+        school = _SCHOOLS_BY_NAME.get(_normalize_school_name(name))
+        if school is None:
+            valid = ", ".join(s.name for s in MagicSchool)
+            raise ValueError(f"Unknown school '{name}' in condition. Valid schools: {valid}")
+        return _SchoolValue(school.value)
 
     def cond_percent(self, _):
         return True

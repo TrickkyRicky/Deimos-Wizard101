@@ -137,7 +137,7 @@ class Compiler:
         match com.kind: 
             case CommandKind.restart_bot:
                 self.emit(InstructionKind.restart_bot)
-            case CommandKind.toggle_combat:
+            case CommandKind.toggle_combat | CommandKind.toggle_dialogue:
                 self.emit(InstructionKind.deimos_call, [com.player_selector, com.kind.name, com.data])
             case CommandKind.set_zone:
                 self.emit(InstructionKind.deimos_call, [com.player_selector, com.kind.name, com.data])

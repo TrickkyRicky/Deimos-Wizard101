@@ -69,6 +69,24 @@ Any async no-argument method on `CombatMember` can be used as an attribute.
 
 Booleans compare numerically: `True == 1`, `False == 0`.
 
+### School attribute
+
+`school` compares a member's primary school against a school **name** (no IDs
+needed). Only `==` and `!=` are allowed, and `%` does not apply.
+
+```
+?(boss.school == death) ...
+?(any(enemies).school != storm) ...
+```
+
+Valid names (case-insensitive, underscores optional): `ice`, `sun`, `life`,
+`fire`, `star`, `myth`, `moon`, `death`, `storm`, `gardening`,
+`castle_magic`, `whirly_burly`, `balance`, `shadow`, `fishing`, `cantrips`.
+An unknown name is a config error when the config is loaded.
+
+Note: `boss.school != death` is false when there is no boss (member not
+found), like any other condition.
+
 ### Hanging effect attributes
 
 These count active hanging effects on a member by reading their participant's
@@ -439,6 +457,20 @@ any<damage&req_met> @ enemy | any<damage> @ enemy
 
 The first two lines handle buffing. Once both fail (you have enough blades
 and the enemy has enough traps), the third line fires.
+
+---
+
+### Prism only against a Death boss
+
+```
+?(boss.school == death) any<prism> @ boss | any<damage> @ boss
+?(boss.school != death) discard @ spell(any<prism>) & any<damage> @ boss
+```
+
+If the boss is Death school, cast the prism on it. Otherwise discard the
+prism from hand and attack. The discard is chained with `&` to a damage
+spell because `discard` reports success even if no prism is in hand, which
+would otherwise end the round's priority list without casting anything.
 
 ---
 
