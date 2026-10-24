@@ -346,7 +346,7 @@ def build_hotkeys_tab(ctx):
             logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             info_layout.addWidget(logo_label)
 
-    _changelog_url = f"https://github.com/{ctx.tool_author}/{ctx.tool_name}-Wizard101/releases/tag/{ctx.tool_version}"
+    _changelog_url = f"{ctx.repo_base}/releases/tag/{ctx.tool_version}"
     version_label = QLabel(f'<b>{ctx.tool_name}</b> <a href="{_changelog_url}" style="color: {ctx.text_color}; text-decoration: none;">v{ctx.tool_version}</a>')
     version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     version_label.setOpenExternalLinks(True)
@@ -397,7 +397,7 @@ def build_hotkeys_tab(ctx):
         for lbl in registry.key_labels.values():
             lbl.setStyleSheet(f"color: {ctx.text_color}; font-style: italic;")
         # Update version link color
-        _cl_url = f"https://github.com/{ctx.tool_author}/{ctx.tool_name}-Wizard101/releases/tag/{ctx.tool_version}"
+        _cl_url = f"{ctx.repo_base}/releases/tag/{ctx.tool_version}"
         version_label.setText(f'<b>{ctx.tool_name}</b> <a href="{_cl_url}" style="color: {ctx.text_color}; text-decoration: none;">v{ctx.tool_version}</a>')
 
     ctx.exports['hotkeys'] = {

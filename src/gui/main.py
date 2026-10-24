@@ -40,6 +40,9 @@ class GUIContext:
     pass
 
 
+GUI_LINK_AUTHOR = 'TrickkyRicky'
+
+
 def manage_gui(send_queue: queue.Queue, recv_queue: queue.Queue, theme_dict, tool_name, tool_version, gui_on_top, langcode, gui_font='Segoe UI', gui_font_size=9, tool_author='Deimos-Wizard101', settings=None):
     tl = load_lang(langcode)
 
@@ -292,7 +295,7 @@ def manage_gui(send_queue: queue.Queue, recv_queue: queue.Queue, theme_dict, too
     ctx.exports = {}
     ctx.svgs = svgs
     ctx.titlebar_svg_icon = _titlebar_svg_icon
-    ctx.repo_base = f"https://github.com/{tool_author}/{tool_name}-Wizard101"
+    ctx.repo_base = f"https://github.com/{GUI_LINK_AUTHOR}/{tool_name}-Wizard101"
     ctx.wiki_base = f"{ctx.repo_base}/wiki"
     ctx.tabs = tabs
     ctx.tracked_icon_buttons = []
