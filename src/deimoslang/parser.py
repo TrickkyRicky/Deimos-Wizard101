@@ -1371,6 +1371,38 @@ class Parser:
                 count = int(self.expect_consume(TokenKind.number).value)
                 body = self.parse_block()
                 return TimesStmt(count, body)
+            case TokenKind.keyword_foreach_entity:
+                # foreachentity <name> { ... } runs the body once per loaded entity whose name
+                # contains <name>, teleporting to each one first. Desugared to:
+                #   <snapshot entities>; while <entities left> { <teleport to next>; body }
+                self.i += 1
+                name_tok = self.expect_consume_any([TokenKind.string, TokenKind.identifier])
+                name = name_tok.value if name_tok.kind == TokenKind.string else name_tok.literal
+                # Optional second string: skip entities that have another entity matching
+                # this name at the same spot (e.g. soils that already have a plant on them)
+                skip_name = None
+                if self.tokens[self.i].kind == TokenKind.string:
+                    skip_name = self.tokens[self.i].value
+                    self.i += 1
+                body = self.parse_block()
+
+                selector = PlayerSelector()
+                selector.mass = True
+                selector.validate()
+
+                reset_cmd = Command()
+                reset_cmd.kind = CommandKind.entity_queue
+                reset_cmd.player_selector = selector
+                reset_cmd.data = ["reset", name, skip_name]
+
+                next_cmd = Command()
+                next_cmd.kind = CommandKind.entity_queue
+                next_cmd.player_selector = selector
+                next_cmd.data = ["next", name, None]
+
+                body.stmts.insert(0, CommandStmt(next_cmd))
+                cond = SelectorGroup(selector, Eval(EvalKind.entities_left, [name]))
+                return StmtList([CommandStmt(reset_cmd), WhileStmt(cond, body)])
             case TokenKind.keyword_if:
                 self.i += 1
                 expr = self.parse_expression()

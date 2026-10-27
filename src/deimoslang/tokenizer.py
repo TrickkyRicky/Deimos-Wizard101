@@ -35,6 +35,7 @@ class TokenKind(Enum):
     keyword_while = auto()
     keyword_until = auto()
     keyword_times = auto()
+    keyword_foreach_entity = auto()
     keyword_if = auto()
     keyword_elif = auto()
     keyword_else = auto()
@@ -378,6 +379,8 @@ class Tokenizer:
                                         put_simple(TokenKind.keyword_until, full)
                                     case "times":
                                         put_simple(TokenKind.keyword_times, full)
+                                    case "foreachentity" | "forentity":
+                                        put_simple(TokenKind.keyword_foreach_entity, full)
                                     case "if":
                                         put_simple(TokenKind.keyword_if, full)
                                     case "else":

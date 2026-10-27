@@ -98,6 +98,9 @@ class VM:
         # This means that the stack must be rolled back to the index stored here and the rhs of this list is discarded.
         self._until_infos: list[UntilInfo] = []
 
+        # Per-client queues of entity locations for `foreachentity`, keyed by (id(client), lowered name)
+        self._entity_queues: dict[tuple[int, str], list[XYZ]] = {}
+
     def reset(self):
         self.program = []
         for _ in self._scheduler.tasks:
@@ -105,6 +108,7 @@ class VM:
         self._scheduler.add_task(Task())
         self.current_task = self._scheduler.get_current_task()
         self._until_infos = []
+        self._entity_queues = {}
         self._timers = {}
         self._any_player_client = []
         self._constants = {
@@ -217,6 +221,38 @@ class VM:
                         result.append(client)
             return result
             
+    async def _snapshot_entity_locations(self, client: SprintyClient, name: str, skip_name: str | None = None) -> list[XYZ]:
+        """Locations of all loaded entities whose name contains `name`, ordered nearest-first
+        (starting from the client's position) so that visiting them in order keeps travel short.
+        If `skip_name` is given, entities with another entity matching `skip_name` at (almost)
+        the same spot are left out."""
+        locations: list[XYZ] = []
+        for entity in await client.get_base_entities_with_vague_name(name):
+            try:
+                locations.append(await entity.location())
+            except (ValueError, MemoryReadError):
+                continue
+
+        if skip_name:
+            occupied: list[XYZ] = []
+            for entity in await client.get_base_entities_with_vague_name(skip_name):
+                try:
+                    occupied.append(await entity.location())
+                except (ValueError, MemoryReadError):
+                    continue
+            locations = [
+                loc for loc in locations
+                if not any(abs(loc.x - o.x) < 5 and abs(loc.y - o.y) < 5 and abs(loc.z - o.z) < 50 for o in occupied)
+            ]
+        ordered: list[XYZ] = []
+        current = await client.body.position()
+        while locations:
+            nearest = min(locations, key=lambda loc: current.distance(loc))
+            locations.remove(nearest)
+            ordered.append(nearest)
+            current = nearest
+        return ordered
+
     async def _fetch_tracked_quest(self, client: SprintyClient) -> QuestData:
         tracked_id = await client.quest_id()
         qm = await client.quest_manager()
@@ -1240,6 +1276,12 @@ class VM:
                 return [0.0]
             case EvalKind.playercount:
                 return len(self._clients)
+            case EvalKind.entities_left:
+                name = eval.args[0]
+                assert(type(name) == str)
+                if name.startswith('$') and name[1:] in self._constants:
+                    name = self._constants[name[1:]]
+                return len(self._entity_queues.get((id(client), name.lower()), [])) > 0
             case EvalKind.potioncount:
                 return await client.stats.potion_charge()
             case EvalKind.max_potioncount:
@@ -1288,6 +1330,19 @@ class VM:
 
         # TODO: is eval always fast enough to run in order during a TaskGroup
         match instruction.data[1]:     
+            case "entity_queue":
+                action, name, skip_name = instruction.data[2]
+                name = await eval_arg(name, clients[0])
+                if skip_name is not None:
+                    skip_name = await eval_arg(skip_name, clients[0])
+                for client in clients:
+                    key = (id(client), name.lower())
+                    if action == "reset":
+                        self._entity_queues[key] = await self._snapshot_entity_locations(client, name, skip_name)
+                    elif action == "next":
+                        queue = self._entity_queues.get(key)
+                        if queue:
+                            await client.teleport(queue.pop(0))
             case "set_zone":
                 for client in clients:
                     zone_name = await client.zone_name()

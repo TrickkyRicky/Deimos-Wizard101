@@ -37,6 +37,7 @@ class CommandKind(Enum):
     toggle_dialogue = auto()
     restart_bot = auto()
     cursor = auto() 
+    entity_queue = auto()
 
 class TeleportKind(Enum):
     position = auto()
@@ -71,6 +72,7 @@ class EvalKind(Enum):
     account_level = auto()
     duel_round = auto()
     reference_counter = auto()
+    entities_left = auto()
 
 class WaitforKind(Enum):
     dialog = auto()
