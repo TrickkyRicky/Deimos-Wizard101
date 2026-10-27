@@ -238,6 +238,28 @@ def _load_recent(filepath, editor, category):
         pass
 
 
+# --- Testing bots folder (dev convenience) ---
+
+def is_dev_build() -> bool:
+    """True when running from source, or when DEIMOS_TEST_BOTS opts a packaged build in."""
+    return not getattr(sys, 'frozen', False) or bool(os.environ.get('DEIMOS_TEST_BOTS'))
+
+
+def get_testing_bots_dir() -> str:
+    env = os.environ.get('DEIMOS_TEST_BOTS')
+    if env:
+        return env
+    saved = _settings_ref.get_setting('testing_bots_dir') if _settings_ref else None
+    if saved:
+        return saved
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'testing_bots')
+
+
+def set_testing_bots_dir(path: str):
+    if _settings_ref:
+        _settings_ref.set_setting('testing_bots_dir', path)
+
+
 def restyle_tracked_buttons(ctx, icon_btn_style, svg_icon_fn, old_stroke, new_stroke):
     """Re-render all helper-created icon buttons after a theme change."""
     new_tracked = []

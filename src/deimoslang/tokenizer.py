@@ -82,6 +82,7 @@ class TokenKind(Enum):
     command_relog = auto()
     command_click = auto()
     command_clickwindow = auto()
+    command_clickentity = auto()
     command_teleport = auto()
     command_friendtp = auto()
     command_entitytp = auto()
@@ -483,6 +484,8 @@ class Tokenizer:
                                         put_simple(TokenKind.command_click, full)
                                     case "clickwindow":
                                         put_simple(TokenKind.command_clickwindow, full)
+                                    case "clickentity" | "click_entity":
+                                        put_simple(TokenKind.command_clickentity, full)
                                     case "friendtp" | "friendteleport":
                                         put_simple(TokenKind.command_friendtp, full)
                                     case "entitytp" | "entityteleport":

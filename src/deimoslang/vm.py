@@ -20,6 +20,7 @@ from .parser import *
 from .ir import *
 
 from src.drop_logger import get_chat, filter_drops, find_new_stuff
+from src.entity_click import click_entity, SoilPlacementError
 from src.auto_pet import dancedance
 from src.dance_game_hook import attempt_activate_dance_hook
 from src.utils import is_visible_by_path, is_free, get_window_from_path, refill_potions, refill_potions_if_needed \
@@ -1563,6 +1564,15 @@ class VM:
                                 async def proxy(client: SprintyClient, path: list):
                                     await click_window_by_path(client, path)
                                 tg.create_task(proxy(client, path))
+                            case ClickKind.entity:
+                                entity_name = await eval_arg(args[1], client)
+                                async def proxy(client: SprintyClient, entity_name: str):
+                                    try:
+                                        await click_entity(client, entity_name)
+                                    except SoilPlacementError as err:
+                                        logger.error(f"{err} - stopping the bot so the layout is not left with a hole")
+                                        self.kill()
+                                tg.create_task(proxy(client, entity_name))
                             case _:
                                 raise VMError(f"Unimplemented click kind: {instruction}")
             case "tozone":

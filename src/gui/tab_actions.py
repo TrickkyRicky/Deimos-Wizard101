@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QFileD
 from PyQt6.QtCore import Qt
 
 from src.gui.commands import GUICommand, GUICommandType
-from src.gui.helpers import centered_label, repo_icon_btn, add_recent, show_recent_menu
+from src.gui.helpers import centered_label, repo_icon_btn, add_recent, show_recent_menu, is_dev_build
 
 
 def _make_toggle_btn(ctx, play_tooltip, kill_tooltip, execute_cb, kill_cb, action_id):
@@ -162,6 +162,16 @@ def build_bot_tab(ctx):
         ctx.bot_publish_dialog = show_bot_publish_popup(ctx, editor.toPlainText())
         ctx.send_queue.put(GUICommand(GUICommandType.PrepareBotPublish))
 
+    def testing_bots():
+        from src.gui.popups import show_testing_bots_popup
+        existing = getattr(ctx, 'testing_bots_dialog', None)
+        if existing is not None:
+            try:
+                existing.close()
+            except RuntimeError:
+                pass
+        ctx.testing_bots_dialog = show_testing_bots_popup(ctx, tab, editor)
+
     toggle_btn, set_bot_running = _make_toggle_btn(
         ctx, ctx.tl('run_bot'), ctx.tl('kill_bot'),
         run_bot_callback, kill_bot_callback, 'toggle_bot')
@@ -171,6 +181,8 @@ def build_bot_tab(ctx):
     recent_btn.clicked.connect(lambda: show_recent_menu(ctx, 'bot', editor, recent_btn))
     btn_row.addStretch()
     btn_row.addWidget(ctx.registry.action_icon_btn(ctx.svgs['search'], ctx.tl('search_bots'), bot_search))
+    if is_dev_build():
+        btn_row.addWidget(ctx.registry.action_icon_btn(ctx.svgs['folder'], ctx.tl('testing_bots'), testing_bots))
     btn_row.addWidget(recent_btn)
     btn_row.addWidget(ctx.registry.action_icon_btn(ctx.svgs['import'], ctx.tl('import_bot'), bot_import))
     btn_row.addWidget(ctx.registry.action_icon_btn(ctx.svgs['export'], ctx.tl('export_bot'), bot_export))

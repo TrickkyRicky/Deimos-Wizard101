@@ -1111,6 +1111,15 @@ class Parser:
                 else:
                     result.data = [ClickKind.window, self.parse_expression()]
                 self.end_line()
+            case TokenKind.command_clickentity:
+                result.kind = CommandKind.click
+                self.i += 1
+                name_token = self.consume_optional(TokenKind.string)
+                if name_token is not None:
+                    result.data = [ClickKind.entity, StringExpression(name_token.value)]
+                else:
+                    result.data = [ClickKind.entity, self.parse_expression()]
+                self.end_line()
             case TokenKind.command_usepotion:
                 result.kind = CommandKind.usepotion
                 self.i += 1

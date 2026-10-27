@@ -1,4 +1,5 @@
 import html
+import os
 import re
 import webbrowser
 
@@ -7,13 +8,16 @@ import pyperclip
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QListWidget, QListWidgetItem, QWidget, QMenu, QProgressBar,
-    QComboBox, QPlainTextEdit, QFormLayout,
+    QComboBox, QPlainTextEdit, QFormLayout, QFileDialog,
 )
 from PyQt6.QtCore import Qt, QSize
 
 from src import bot_registry
 from src.gui.commands import GUICommand, GUICommandType
-from src.gui.helpers import launcher_small_icon_btn, spinning_loader_widget
+from src.gui.helpers import (
+    launcher_small_icon_btn, spinning_loader_widget, add_recent,
+    get_testing_bots_dir, set_testing_bots_dir,
+)
 
 
 def show_update_dialog(parent, send_queue, version, notes_url, tool_name='Deimos', tl=None):
@@ -193,6 +197,118 @@ def show_bot_search_popup(ctx, bot_tab):
     close_btn.clicked.connect(dialog.close)
     layout.addWidget(close_btn)
 
+    dialog.show()
+    return dialog
+
+
+def show_testing_bots_popup(ctx, bot_tab, editor):
+    """Dev popup listing .txt bots from a local folder so they can be loaded without a file dialog.
+
+    The folder comes from DEIMOS_TEST_BOTS, else the saved choice, else ``<app>/testing_bots``.
+    Rows load into the Bot tab editor or load and run straight away.
+    """
+    tl = ctx.tl
+    dialog = QDialog(ctx.window)
+    dialog.setWindowTitle(tl('testing_bots'))
+    dialog.resize(560, 420)
+    layout = QVBoxLayout(dialog)
+
+    folder_row = QHBoxLayout()
+    folder_label = QLabel()
+    folder_label.setWordWrap(True)
+    folder_row.addWidget(folder_label, 1)
+    layout.addLayout(folder_row)
+
+    status_label = QLabel()
+    status_label.setWordWrap(True)
+    layout.addWidget(status_label)
+
+    listbox = QListWidget()
+    layout.addWidget(listbox, 1)
+
+    def _load(path, run):
+        try:
+            with open(path, encoding='utf-8') as f:
+                text = f.read()
+        except OSError as e:
+            status_label.setText(str(e))
+            return
+        editor.setPlainText(text)
+        add_recent('bot', path)
+        ctx.tabs.setCurrentWidget(bot_tab)
+        if run:
+            ctx.send_queue.put(GUICommand(GUICommandType.ExecuteBot, text))
+        dialog.close()
+
+    def _add_row(path, root):
+        try:
+            with open(path, encoding='utf-8') as f:
+                metadata, _body = bot_registry.split_bot_metadata(f.read())
+        except OSError:
+            metadata = {}
+        rel = os.path.relpath(path, root).replace(os.sep, '/')
+        name = metadata.get('name') or os.path.splitext(os.path.basename(path))[0]
+
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(4, 2, 4, 2)
+        row_layout.setSpacing(4)
+        text_col = QVBoxLayout()
+        text_col.setSpacing(0)
+        title = QLabel(f"<b>{html.escape(str(name))}</b> &nbsp;·&nbsp; {html.escape(rel)}")
+        title.setTextFormat(Qt.TextFormat.RichText)
+        text_col.addWidget(title)
+        description = str(metadata.get('description') or '').strip()
+        if description:
+            desc = QLabel(description if len(description) <= 150 else description[:150] + '…')
+            desc.setWordWrap(True)
+            desc.setToolTip(description)
+            text_col.addWidget(desc)
+        row_layout.addLayout(text_col, 1)
+        row_layout.addWidget(launcher_small_icon_btn(
+            ctx, ctx.svgs['import'], tl('bot_search_import'), lambda _=False, p=path: _load(p, False)))
+        row_layout.addWidget(launcher_small_icon_btn(
+            ctx, ctx.svgs['play'], tl('bot_search_run'), lambda _=False, p=path: _load(p, True)))
+
+        item = QListWidgetItem()
+        item.setSizeHint(row_widget.sizeHint())
+        listbox.addItem(item)
+        listbox.setItemWidget(item, row_widget)
+
+    def refresh():
+        root = get_testing_bots_dir()
+        folder_label.setText(tl('testing_bots_folder').format(root))
+        listbox.clear()
+        if not os.path.isdir(root):
+            status_label.setText(tl('testing_bots_missing').format(root))
+            return
+        paths = []
+        for dirpath, _dirs, files in os.walk(root):
+            paths.extend(os.path.join(dirpath, f) for f in files if f.lower().endswith('.txt'))
+        paths.sort(key=lambda p: os.path.relpath(p, root).lower())
+        if not paths:
+            status_label.setText(tl('testing_bots_none').format(root))
+            return
+        status_label.setText('')
+        for path in paths:
+            _add_row(path, root)
+
+    def choose_folder():
+        chosen = QFileDialog.getExistingDirectory(dialog, tl('testing_bots_choose'), get_testing_bots_dir())
+        if chosen:
+            set_testing_bots_dir(chosen)
+            refresh()
+
+    btn_row = QHBoxLayout()
+    btn_row.addWidget(launcher_small_icon_btn(ctx, ctx.svgs['folder'], tl('testing_bots_choose'), lambda _=False: choose_folder()))
+    btn_row.addWidget(launcher_small_icon_btn(ctx, ctx.svgs['refresh'], tl('testing_bots_refresh'), lambda _=False: refresh()))
+    btn_row.addStretch()
+    close_btn = QPushButton(tl('close'))
+    close_btn.clicked.connect(dialog.close)
+    btn_row.addWidget(close_btn)
+    layout.addLayout(btn_row)
+
+    refresh()
     dialog.show()
     return dialog
 

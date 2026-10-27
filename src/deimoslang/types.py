@@ -86,6 +86,7 @@ class CursorKind(Enum):
 class ClickKind(Enum):
     window = auto()
     position = auto()
+    entity = auto()
 
 class LogKind(Enum):
     multi = auto()
