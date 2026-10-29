@@ -42,6 +42,8 @@ x_press=X Press
 friend_tp=Friend TP
 dialogue_side_quests=Accept Side Quests
 zone_lock=Lock to Current Zone
+zone_questing=Zone Questing
+dump_quest_ui=Dump Quest UI
 kill_tool=Kill Tool
 
 # Hotkey Manager

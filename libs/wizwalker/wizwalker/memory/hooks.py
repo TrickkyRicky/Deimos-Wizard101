@@ -665,7 +665,7 @@ class MouselessCursorMoveHook(User32GetClassInfoBaseHook):
         bool_two_address = None
         if not self._is_cached("bool_two_address"):
             if a := await self.pattern_scan(
-                rb"\xC6\x86...\x00\x00\x33\xFF\x89",
+                rb"\xC6\x86...\x00\x00\x33[\xF6\xFF]\x89",
                 module="WizardGraphicalClient.exe",
             ):
                 self._cache("bool_two_address", a)

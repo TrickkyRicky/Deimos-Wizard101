@@ -15,10 +15,16 @@ from wizwalker.extensions.scripting import teleport_to_friend_from_list
 from src.sprinty_client import SprintyClient
 from src.utils import *
 from src.paths import *
+from src.quest_finder import world_key, press_quest_finder, tracked_snapshot, hidden_reason, dump_quest_data, QuestFinderUIError
 from thefuzz import fuzz
 
 # Set by Deimos.py; called (sync) when a zone-locked client has left its locked area.
 zone_lock_exit_callback = None
+# Set by Deimos.py; called (sync) when zone questing finishes on its own.
+zone_quest_done_callback = None
+
+ZONE_QUEST_MAX_STUCK = 10
+ZONE_QUEST_FINDER_EMPTY_LIMIT = 2
 
 
 def zone_area_key(zone_name: str) -> str:
@@ -1419,6 +1425,157 @@ class Quester():
             if await self.left_locked_area():
                 return
             await self.auto_quest_solo(ignore_pet_level_up=ignore_pet_level_up, play_dance_game=play_dance_game)
+
+    async def _zone_quest_label(self, quest_id: int) -> str:
+        try:
+            quest = (await (await self.client.quest_manager()).quest_data()).get(quest_id)
+            key = await quest.name_lang_key()
+            return key if key == 'Quest Finder' else await self.client.cache_handler.get_langcode_name(key)
+        except Exception:
+            return str(quest_id)
+
+    async def _zone_quest_candidates(self, world: str, skipped: dict) -> list[tuple[int, int, str]]:
+        # (quest_id, goal_id, goal_zone) for accepted quests whose first trackable incomplete goal is in `world`.
+        result = []
+        for quest_id, quest in (await (await self.client.quest_manager()).quest_data()).items():
+            if quest_id in skipped:
+                continue
+            try:
+                if await quest.pet_only_quest():
+                    continue
+                reason = await hidden_reason(quest)
+                if reason:
+                    skipped[quest_id] = f"{await self._zone_quest_label(quest_id)}: hidden ({reason})"
+                    logger.info(f"[zone_quest] Ignoring {skipped[quest_id]}")
+                    continue
+                goals = await quest.goal_data()
+                for goal_id, goal in goals.items():
+                    # no_quest_helper reads True even for goals whose arrow works, so it is not used as the hidden filter.
+                    if await goal.goal_status() or await goal.pet_only_quest():
+                        continue
+                    dest = await goal.goal_destination_zone()
+                    # Empty destination = same area as the giver; unverified, the stuck counter catches bad guesses.
+                    if dest and world_key(dest) != world:
+                        continue
+                    result.append((quest_id, goal_id, dest))
+                    break
+                else:
+                    if goals and await quest.ready_to_turn_in():
+                        result.append((quest_id, list(goals)[-1], ''))
+            except Exception as e:
+                logger.debug(f"[zone_quest] could not read quest {quest_id}: {e!r}")
+        return result
+
+    async def _track_quest(self, quest_id: int) -> bool:
+        # goal_data() keys are 64-bit template ids, unrelated to the 32-bit active goal id, so only the quest id is written.
+        registry = await self.client.character_registry()
+        goal_before = await self.client.goal_id()
+        await registry.write_active_quest_id(quest_id)
+        await asyncio.sleep(1.0)
+        goal_after = await self.client.goal_id()
+        pos = await self.client.quest_position.position()
+        logger.info(f"[zone_quest] tracked quest {quest_id}: active goal id {goal_before} -> {goal_after}, quest_position=({pos.x:.0f}, {pos.y:.0f}, {pos.z:.0f})")
+        return await self.client.quest_id() == quest_id
+
+    async def _zone_quest_progress(self, quest_id: int) -> tuple:
+        quest = (await (await self.client.quest_manager()).quest_data()).get(quest_id)
+        statuses = None
+        if quest is not None:
+            statuses = tuple([await g.goal_status() for g in (await quest.goal_data()).values()])
+        # HUD text carries the "(1 of 3)" counter, which goal_status does not.
+        return statuses, await self.read_quest_txt(self.client), await self.client.zone_name()
+
+    async def _tracked_goal_zone(self) -> str:
+        try:
+            quest = (await (await self.client.quest_manager()).quest_data()).get(await self.client.quest_id())
+            goal = (await quest.goal_data()).get(await self.client.goal_id())
+            return await goal.goal_destination_zone()
+        except Exception:
+            return ''
+
+    async def auto_zone_quest(self, ignore_pet_level_up: bool, play_dance_game: bool):
+        # Finishes every trackable quest in the current world, using the Quest Finder to pick up more.
+        client = self.client
+        world = world_key(await client.zone_name())
+        client.zone_questing_world = world
+        logger.info(f"[zone_quest] Client {client.title} zone questing locked to world {world!r}.")
+        await dump_quest_data(client)
+
+        skipped = {}  # quest_id -> reason
+        stuck = {}  # quest_id -> consecutive iterations without progress
+        finder_empty = 0
+        finder_seen = set()
+        finder_followup = 0
+
+        try:
+            while client.questing_status:
+                await asyncio.sleep(1)
+                if await client.is_loading() or not await is_free(client):
+                    continue
+
+                if world_key(await client.zone_name()) != world:
+                    logger.warning(f"[zone_quest] Left world {world!r} (now in {await client.zone_name()}) - stopping.")
+                    return
+
+                candidates = await self._zone_quest_candidates(world, skipped)
+                if candidates:
+                    finder_empty = 0
+                    finder_followup = 0
+                    quest_id, goal_id, dest = candidates[0]
+
+                    if await client.quest_id() != quest_id:
+                        if not await self._track_quest(quest_id):
+                            skipped[quest_id] = f"{await self._zone_quest_label(quest_id)}: game did not keep the tracked quest"
+                            logger.warning(f"[zone_quest] Skipping {skipped[quest_id]}")
+                            continue
+
+                    before = await self._zone_quest_progress(quest_id)
+                    await self.auto_quest_solo(ignore_pet_level_up=ignore_pet_level_up, play_dance_game=play_dance_game)
+                    if await self._zone_quest_progress(quest_id) != before:
+                        stuck[quest_id] = 0
+                    else:
+                        stuck[quest_id] = stuck.get(quest_id, 0) + 1
+                        if stuck[quest_id] >= ZONE_QUEST_MAX_STUCK:
+                            skipped[quest_id] = f"{await self._zone_quest_label(quest_id)}: no progress on goal {goal_id} (zone {dest!r})"
+                            logger.warning(f"[zone_quest] Skipping {skipped[quest_id]}")
+                    continue
+
+                # Nothing accepted left in this world: keep following a fresh Quest Finder target before asking again.
+                if finder_followup > 0:
+                    finder_followup -= 1
+                    await self.auto_quest_solo(ignore_pet_level_up=ignore_pet_level_up, play_dance_game=play_dance_game)
+                    continue
+
+                if finder_empty >= ZONE_QUEST_FINDER_EMPTY_LIMIT:
+                    break
+
+                before = await tracked_snapshot(client)
+                try:
+                    await press_quest_finder(client)
+                except QuestFinderUIError as e:
+                    logger.error(f"[zone_quest] Quest Finder unavailable: {e}")
+                    return
+                after = await tracked_snapshot(client)
+
+                target_zone = await self._tracked_goal_zone()
+                result_key = (after[0], after[2])
+                in_world = not target_zone or world_key(target_zone) == world
+                if after == before or result_key in finder_seen or not in_world:
+                    finder_empty += 1
+                    logger.info(f"[zone_quest] Quest Finder found nothing new in {world!r} ({finder_empty}/{ZONE_QUEST_FINDER_EMPTY_LIMIT}); target zone {target_zone!r}.")
+                else:
+                    finder_empty = 0
+                    finder_followup = ZONE_QUEST_MAX_STUCK
+                    logger.info(f"[zone_quest] Quest Finder target {after[0]} at {after[2]} in {target_zone!r}.")
+                finder_seen.add(result_key)
+            else:
+                return  # questing turned off by the user
+
+            logger.info(f"[zone_quest] Finished {world!r}: no quests left. Skipped: {list(skipped.values()) or 'none'}")
+            if zone_quest_done_callback is not None:
+                zone_quest_done_callback()
+        finally:
+            client.zone_questing_world = None
 
     async def enable_quest_helper(self):
         # With the helper disallowed the game stops updating the arrow, so quest_position can be stale rather than zero.

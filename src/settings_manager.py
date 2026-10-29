@@ -118,6 +118,8 @@ DEFAULT_HOTKEYS = {
     "toggle_auto_potion": None,
     "toggle_drops": None,
     "toggle_zone_lock": None,
+    "toggle_zone_questing": None,
+    "dump_quest_ui": None,
 }
 
 # Maps ini key names -> action_id

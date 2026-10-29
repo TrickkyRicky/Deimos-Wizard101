@@ -39,6 +39,10 @@ def build_hotkeys_tab(ctx):
         send_queue.put(GUICommand(GUICommandType.ToggleDialogueSideQuests))
     def zone_lock_callback():
         send_queue.put(GUICommand(GUICommandType.ToggleZoneLock))
+    def zone_questing_callback():
+        send_queue.put(GUICommand(GUICommandType.ToggleZoneQuesting))
+    def dump_quest_ui_callback():
+        send_queue.put(GUICommand(GUICommandType.DumpQuestUI))
 
     # --- Left panel: Hotkey Manager ---
     hk_manager = QWidget()
@@ -78,6 +82,7 @@ def build_hotkeys_tab(ctx):
             ("toggle_sigil", tl('sigil'), toggle_callback(send_queue, GUIKeys.toggle_sigil), True, tl('sigil'), _toggle_icons['bot']),
             ("toggle_questing", tl('questing'), toggle_callback(send_queue, GUIKeys.toggle_questing), True, tl('questing'), _toggle_icons['brain']),
             ("toggle_zone_lock", tl('zone_lock'), zone_lock_callback, True, 'ZoneLock', _toggle_icons['goal']),
+            ("toggle_zone_questing", tl('zone_questing'), zone_questing_callback, True, 'ZoneQuesting', _toggle_icons['brain']),
             ("toggle_auto_pet", tl('auto_pet'), toggle_callback(send_queue, GUIKeys.toggle_auto_pet), True, tl('auto_pet'), _toggle_icons['paw']),
             ("toggle_auto_potion", tl('auto_potion'), toggle_callback(send_queue, GUIKeys.toggle_auto_potion), True, tl('auto_potion'), _toggle_icons['flask']),
             ("toggle_drops", tl('no_drops'), toggle_callback(send_queue, GUIKeys.toggle_drops), True, 'No Drops', _toggle_icons['scroll-text']),
@@ -95,6 +100,7 @@ def build_hotkeys_tab(ctx):
         ]),
         (tl('cat_system'), [
             ("kill_tool", tl('kill_tool'), None, False, None, _toggle_icons['exit']),
+            ("dump_quest_ui", tl('dump_quest_ui'), dump_quest_ui_callback, False, None, _toggle_icons['scroll-text']),
         ]),
     ]
 

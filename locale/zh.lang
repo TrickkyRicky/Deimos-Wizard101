@@ -42,6 +42,8 @@ x_press=按下X键
 friend_tp=好友传送
 dialogue_side_quests=支线任务(+)
 zone_lock=锁定当前区域
+zone_questing=区域任务
+dump_quest_ui=导出任务界面
 kill_tool=结束工具
 
 # 快捷键管理器

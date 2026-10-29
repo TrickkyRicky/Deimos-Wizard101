@@ -58,6 +58,8 @@ class GUICommandType(Enum):
     FriendTeleport = auto()      # GUI -> Backend
     ToggleDialogueSideQuests = auto()  # GUI -> Backend
     ToggleZoneLock = auto()  # GUI -> Backend
+    ToggleZoneQuesting = auto()  # GUI -> Backend
+    DumpQuestUI = auto()  # GUI -> Backend
 
     InvokeAction = auto()       # Backend -> GUI: action_id (triggers button callback)
 

@@ -188,3 +188,8 @@ quest_buttons_parent_path = ['WorldView', 'DeckConfiguration', 'wndQuestList']
 quest_two_button_path = ['WorldView', 'DeckConfiguration', 'wndQuestList', 'wndQuestInfo1']
 all_quests_sort_button_path = ['WorldView', 'DeckConfiguration', 'wndQuestList', 'QuestLogAllButton']
 
+# Quest Finder (last page of the quest book). None = discover by name/text; fill in from the "Dump Quest UI" log.
+quest_book_root_path = ['WorldView', 'DeckConfiguration']
+quest_finder_icon_path = None
+quest_book_next_page_path = None
+

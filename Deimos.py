@@ -64,6 +64,7 @@ from src.paths import (
 )
 from src.questing import Quester
 import src.questing as quest_mod
+from src.quest_finder import dump_quest_ui, dump_quest_data
 from src.settings_manager import DeimosSettings, running_under_wine
 from src.sigil import Sigil
 from src.sprinty_client import SprintyClient
@@ -283,6 +284,7 @@ sigil_leader_pid: int = None
 questing_leader_pid: int = None
 
 questing_task: asyncio.Task = None
+zone_questing_task: asyncio.Task = None
 auto_pet_task: asyncio.Task = None
 sigil_task: asyncio.Task = None
 dialogue_task: asyncio.Task = None
@@ -903,6 +905,86 @@ async def main():
             asyncio.create_task(toggle_questing_hotkey())
 
     quest_mod.zone_lock_exit_callback = _stop_questing_after_zone_exit
+
+    async def zone_questing_loop():
+        client = foreground_client or walker.clients[0]
+        client.character_level = await client.stats.reference_level()
+        await quest_mod.Quester(client, [client], None).auto_zone_quest(
+            ignore_pet_level_up, only_play_dance_game
+        )
+
+    async def toggle_zone_questing_hotkey():
+        global zone_questing_task
+        global questing_task
+        global questing_status
+        global sigil_task
+        global sigil_status
+
+        if freecam_status:
+            return
+
+        if zone_questing_task is not None:
+            logger.debug("Zone questing hotkey pressed, disabling zone questing.")
+            zone_questing_task.cancel()
+            zone_questing_task = None
+            for p in walker.clients:
+                p.questing_status = False
+            gui_send_queue.put(
+                deimosgui.GUICommand(
+                    deimosgui.GUICommandType.UpdateWindow,
+                    ("ZoneQuestingStatus", "Disabled"),
+                )
+            )
+            return
+
+        # Zone questing replaces normal questing and sigil.
+        if questing_task is not None:
+            questing_task.cancel()
+            questing_task = None
+            questing_status = False
+            gui_send_queue.put(
+                deimosgui.GUICommand(
+                    deimosgui.GUICommandType.UpdateWindow,
+                    ("QuestingStatus", "Disabled"),
+                )
+            )
+        if sigil_task is not None:
+            sigil_task.cancel()
+            sigil_task = None
+            sigil_status = False
+            gui_send_queue.put(
+                deimosgui.GUICommand(
+                    deimosgui.GUICommandType.UpdateWindow,
+                    ("SigilStatus", "Disabled"),
+                )
+            )
+        for p in walker.clients:
+            p.sigil_status = False
+            p.questing_status = False
+
+        client = foreground_client or walker.clients[0]
+        client.questing_status = True
+        logger.debug("Zone questing hotkey pressed, enabling zone questing.")
+        gui_send_queue.put(
+            deimosgui.GUICommand(
+                deimosgui.GUICommandType.UpdateWindow,
+                ("ZoneQuestingStatus", "Enabled"),
+            )
+        )
+        zone_questing_task = asyncio.create_task(
+            try_task_coro(zone_questing_loop, walker.clients, True)
+        )
+
+    def _stop_zone_questing_when_done():
+        if zone_questing_task is not None:
+            asyncio.create_task(toggle_zone_questing_hotkey())
+
+    quest_mod.zone_quest_done_callback = _stop_zone_questing_when_done
+
+    async def dump_quest_ui_hotkey():
+        client = foreground_client or walker.clients[0]
+        await dump_quest_data(client)
+        await dump_quest_ui(client)
 
     async def toggle_sigil_hotkey():
         global sigil_task
@@ -2949,6 +3031,20 @@ async def main():
                                 )
                                 continue
                             await toggle_zone_lock_hotkey()
+                        case deimosgui.GUICommandType.ToggleZoneQuesting:
+                            if not walker.clients:
+                                logger.info(
+                                    "This GUI option requires hooks to be active, skipping."
+                                )
+                                continue
+                            await toggle_zone_questing_hotkey()
+                        case deimosgui.GUICommandType.DumpQuestUI:
+                            if not walker.clients:
+                                logger.info(
+                                    "This GUI option requires hooks to be active, skipping."
+                                )
+                                continue
+                            await dump_quest_ui_hotkey()
                         case deimosgui.GUICommandType.RebindHotkey:
                             action_id, new_key, new_mods = com.data
                             # Remove old binding from listener if active
