@@ -156,6 +156,8 @@ class Compiler:
                 self.emit(InstructionKind.compound_deimos_call, command_entries)
             case CommandKind.autopet:
                 self.emit(InstructionKind.deimos_call, [com.player_selector, com.kind.name, com.data])
+            case CommandKind.entity_queue:
+                self.emit_deimos_call(com)
             case CommandKind.kill:
                 self.emit(InstructionKind.kill)
             case CommandKind.sleep:

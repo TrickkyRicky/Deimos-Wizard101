@@ -577,6 +577,12 @@ def show_entity_list_popup(parent, send_queue, widget_tags, tabs, dev_tab, camer
     listbox.setMouseTracking(True)
     layout.addWidget(listbox)
 
+    copy_all_btn = QPushButton(tl('copy_all') if tl and tl('copy_all') != 'copy_all' else "Copy all")
+    copy_all_btn.setToolTip("Copy every listed entity (respects the search filter) to the clipboard")
+    copy_all_btn.clicked.connect(
+        lambda: pyperclip.copy("\n".join(listbox.item(i).text() for i in range(listbox.count()))))
+    layout.addWidget(copy_all_btn)
+
     all_entities = []
 
     def _populate(entries):
