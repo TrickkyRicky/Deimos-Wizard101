@@ -1465,6 +1465,138 @@ class VM:
                             
                             for client in clients:
                                 async def tp_to_vague_entity(client):
+                                    if str(vague).lower() == "__collect__":
+                                        # script hook: find the quest item and stand on it. Does NOT press X:
+                                        # the script waits for the prompt, presses X and retries from there.
+                                        from src.questing import Quester
+                                        from thefuzz import fuzz
+                                        q = Quester(client, [client], client.process_id)
+                                        item = (await q.get_collect_quest_object_name()).strip().lower()
+                                        if not item:
+                                            return
+                                        skip = ("Basic Positional", "WispHealth", "WispMana", "KT_WispHealth", "KT_WispMana", "WispGold", "DuelCircle", "Player Object", "SkeletonKeySigilArt", "Basic Ambient", "TeleportPad")
+
+                                        async def _item_spots(ents):
+                                            found = []
+                                            for e in ents:
+                                                try:
+                                                    t = await e.object_template()
+                                                    dn = (await client.cache_handler.get_langcode_name(await t.display_name())).lower()
+                                                    strength = 0
+                                                    if fuzz.token_sort_ratio(dn, item) > 80:
+                                                        strength = 2
+                                                    else:
+                                                        on = str(await t.object_name())
+                                                        if on not in skip:
+                                                            parts = on.split("_") if "_" in on else on.split("-")
+                                                            nm = re.sub(r"[\d_]", "", "".join(parts[1:])).lower()
+                                                            if nm != "" and fuzz.ratio(nm, item) > 50:
+                                                                strength = 1
+                                                    if strength:
+                                                        found.append((strength, await e.location()))
+                                                except Exception:
+                                                    continue
+                                            return found
+
+                                        async def _land_on_one(cands, ref):
+                                            # best name matches first, nearest first; keep the one that shows an interact prompt
+                                            cands.sort(key=lambda c: (-c[0], calc_Distance(ref, c[1])))
+                                            for _, loc in cands[:8]:
+                                                await client.teleport(loc)
+                                                await asyncio.sleep(0.8)
+                                                if await is_visible_by_path(client, ["WorldView", "NPCRangeWin", "imgBackground"]):
+                                                    return True
+                                            return False
+
+                                        # 1) anything already loaded around us (no scan needed)
+                                        here = await client.body.position()
+                                        if await _land_on_one(await _item_spots(await client.get_base_entity_list()), here):
+                                            return
+                                        # 2) scan the zone chunks from underground, starting where the last item was
+                                        chunks = await q.get_zone_chunks()
+                                        if not chunks:
+                                            return
+                                        zone = await client.zone_name()
+                                        cache = getattr(client, "_aq_chunk_idx", None)
+                                        if cache is None:
+                                            cache = {}
+                                            client._aq_chunk_idx = cache
+                                        start = cache.get(zone, 0) % len(chunks)
+                                        for step in range(len(chunks)):
+                                            idx = (start + step) % len(chunks)
+                                            pt = chunks[idx]
+                                            under = XYZ(pt.x, pt.y, pt.z - 550)
+                                            await client.teleport(under)
+                                            await asyncio.sleep(0.3)
+                                            cands = await _item_spots(await client.get_base_entity_list())
+                                            if cands and await _land_on_one(cands, under):
+                                                cache[zone] = idx
+                                                return
+                                        return
+                                    if str(vague).lower() == "__mob__":
+                                        # script hook: teleport to the mob named in a "Defeat X ..." goal
+                                        from src.questing import Quester
+                                        from thefuzz import fuzz
+                                        txt = re.sub(r"<[^>]*>", "", await Quester(client, [client], client.process_id).read_quest_txt(client))
+                                        t = re.sub(r"\(\d+ of \d+\)", "", txt).strip()
+                                        t = re.sub(r"(?i)^\s*defeat\s+", "", t)
+                                        t = re.split(r"(?i)\s+and\s+collect", t)[0]
+                                        t = re.sub(r"(?i)\s+in\s+[^()]*$", "", t).strip()
+                                        wanted = [n.strip().lower().rstrip("s") for n in re.split(r"(?i)\s+and\s+|,\s*", t) if n.strip()]
+                                        if not wanted:
+                                            return
+                                        here = await client.body.position()
+                                        best, best_d = None, None
+                                        for e in await client.get_mobs():
+                                            try:
+                                                tmpl = await e.object_template()
+                                                name = (await client.cache_handler.get_langcode_name(await tmpl.display_name())).lower()
+                                                if not any(w in name or fuzz.token_sort_ratio(name.rstrip("s"), w) > 80 for w in wanted):
+                                                    continue
+                                                loc = await e.location()
+                                                d = calc_Distance(here, loc)
+                                                if best is None or d < best_d:
+                                                    best, best_d = loc, d
+                                            except Exception:
+                                                continue
+                                        if best is not None:
+                                            await client.teleport(best)
+                                        return
+                                    if str(vague).lower() == "__use__":
+                                        # script hook: go straight onto the object named in a "Use X in Y" goal,
+                                        # with a plain teleport (no collision solver, which rejects boats etc.)
+                                        from src.questing import Quester
+                                        from thefuzz import fuzz
+                                        txt = re.sub(r"<[^>]*>", "", await Quester(client, [client], client.process_id).read_quest_txt(client))
+                                        t = re.sub(r"\(\d+ of \d+\)", "", txt).strip()
+                                        t = re.sub(r"(?i)^\s*\w+\s+", "", t)
+                                        t = re.sub(r"(?i)\s+in\s+[^()]*$", "", t).strip()
+                                        norm = lambda x: re.sub(r"[^a-z0-9]", "", x.lower())
+                                        want = norm(t)
+                                        if not want:
+                                            return
+                                        skip = ("Basic Positional", "WispHealth", "WispMana", "WispGold", "DuelCircle", "Player Object", "Basic Ambient", "TeleportPad")
+                                        best, best_s, best_d = None, 0, None
+                                        here = await client.body.position()
+                                        for e in await client.get_base_entity_list():
+                                            try:
+                                                tmpl = await e.object_template()
+                                                oname = str(await tmpl.object_name())
+                                                if oname in skip:
+                                                    continue
+                                                dname = await client.cache_handler.get_langcode_name(await tmpl.display_name())
+                                                sc = max(fuzz.ratio(norm(dname), want), fuzz.partial_ratio(norm(oname), want))
+                                                if sc < 60:
+                                                    continue
+                                                loc = await e.location()
+                                                d = calc_Distance(here, loc)
+                                                if sc > best_s or (sc == best_s and d < best_d):
+                                                    best, best_s, best_d = loc, sc, d
+                                            except Exception:
+                                                continue
+                                        if best is not None:
+                                            await client.teleport(best)
+                                        return
                                     entity = await client.find_closest_by_vague_name(vague)
                                     if entity:
                                         pos = await entity.location()
