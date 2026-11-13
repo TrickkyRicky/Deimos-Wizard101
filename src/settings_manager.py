@@ -42,6 +42,7 @@ DEFAULT_SETTINGS = {
     "client_to_follow": None,
     # [questing]
     "client_to_boost": None,
+    "helper_client": None,
     "friend_teleport": False,
     "gear_switching_in_solo_zones": False,
     "hitter_client": None,

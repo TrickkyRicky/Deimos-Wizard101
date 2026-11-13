@@ -154,6 +154,7 @@ buy_potions = True
 client_resizing = True
 client_to_follow = None
 client_to_boost = None
+helper_client = None
 questing_friend_tp = False
 gear_switching_in_solo_zones = False
 hitter_client = None
@@ -181,6 +182,11 @@ anti_afk_status = _json_settings.get("use_anti_afk", anti_afk_status)
 buy_potions = _json_settings.get("buy_potions", buy_potions)
 client_resizing = _json_settings.get("client_resizing", client_resizing)
 client_resizing_manager = ClientResizingManager()
+
+
+def is_helper_client(client) -> bool:
+    # Helper accounts never quest and are only moved into fights by a bot script
+    return bool(helper_client) and helper_client in client.title
 
 
 async def _apply_account_window_config(client, handle, nick):
@@ -214,6 +220,7 @@ gui_font_size = _json_settings.get("font_size", gui_font_size)
 use_team_up = _json_settings.get("use_team_up", use_team_up)
 client_to_follow = _json_settings.get("client_to_follow", client_to_follow)
 client_to_boost = _json_settings.get("client_to_boost", client_to_boost)
+helper_client = _json_settings.get("helper_client", helper_client)
 questing_friend_tp = _json_settings.get("friend_teleport", questing_friend_tp)
 gear_switching_in_solo_zones = _json_settings.get(
     "gear_switching_in_solo_zones", gear_switching_in_solo_zones
@@ -1429,15 +1436,16 @@ async def main():
             while True:
                 await asyncio.sleep(1)
 
-                if client in walker.clients and questing_status:
-                    if questing_leader_pid is not None and len(walker.clients) > 1:
+                if client in walker.clients and questing_status and not is_helper_client(client):
+                    questers = [c for c in walker.clients if not is_helper_client(c)]
+                    if questing_leader_pid is not None and len(questers) > 1:
                         if client.process_id == questing_leader_pid:
                             # if follow leader is off, quest on all clients, passing through only the leader
                             logger.debug(
                                 f"Client {client.title} - Handling questing for all clients."
                             )
                             questing = Quester(
-                                client, walker.clients, questing_leader_pid
+                                client, questers, questing_leader_pid
                             )
                             await questing.auto_quest_leader(
                                 questing_friend_tp,
@@ -1449,7 +1457,7 @@ async def main():
                     else:
                         # if follow leader is off, quest on all clients, passing through only the leader
                         logger.debug(f"Client {client.title} - Handling questing.")
-                        questing = Quester(client, walker.clients, None)
+                        questing = Quester(client, questers, None)
                         await questing.auto_quest(
                             ignore_pet_level_up, only_play_dance_game
                         )
@@ -1462,6 +1470,10 @@ async def main():
                 global questing_task
 
                 await asyncio.sleep(0.1)
+                if is_helper_client(client):
+                    # an idle helper must not look like halted questing
+                    await asyncio.sleep(5)
+                    continue
                 if not freecam_status:
                     client_xyz = await client.body.position()
                     await asyncio.sleep(120)
@@ -1586,7 +1598,7 @@ async def main():
             while True:
                 await asyncio.sleep(0.5)
 
-                if p.questing_status:
+                if p.questing_status and not is_helper_client(p):
                     if p.just_entered_combat is not None:
                         # 5 seconds have passed since the client entered combat
                         if time.time() >= (p.just_entered_combat + 7):
@@ -1646,6 +1658,8 @@ async def main():
                                     none_in_solo_zone = True
                                     all_already_in_battle = False
                                     for c in other_clients:
+                                        if is_helper_client(c):
+                                            continue
                                         client_is_hitter_client = False
                                         if hitter_client is not None:
                                             if hitter_client in c.title:
@@ -1835,6 +1849,9 @@ async def main():
     initial_setup_complete = False
     # Handles explicitly released via UnhookClient — skip in continuous detection
     released_handles: set[int] = set()
+    # Handles whose hooks are being torn down in the background
+    _unhooking: set[int] = set()
+    _teardown_tasks: set = set()
     # Handles currently mid-hook (activate_hooks in progress)
     _hooking_in_progress: set[int] = set()
     # Handle -> the in-flight task waiting for that client's hooks to come ready.
@@ -1988,8 +2005,41 @@ async def main():
             global questing_leader_pid
             questing_leader_pid = client.process_id
 
+    async def _wait_hooks_ready(nc):
+        names = (
+            "player_struct",
+            "player_stat_struct",
+            "current_client",
+            "current_root_window",
+            "current_render_context",
+        )
+        handler = nc.hook_handler
+        waited = 0.0
+        while True:
+            unset = []
+            for name in names:
+                try:
+                    value = await handler.read_typed(
+                        handler._base_addrs[name], wizwalker.Primitive.int64
+                    )
+                except wizwalker.errors.MemoryReadError:
+                    value = 0
+                if not value:
+                    unset.append(name)
+            if not unset:
+                return
+            if not nc.is_running():
+                raise wizwalker.errors.ClientClosedError()
+            if waited and waited % 15 == 0:
+                logger.warning(
+                    f"Client '{nc.title}' still waiting on hooks {unset} after {int(waited)}s "
+                    "(is a wizard selected and the window not minimized/hidden?)"
+                )
+            await asyncio.sleep(0.5)
+            waited += 0.5
+
     async def _auto_hook_client(nc, handle):
-        """Wait for a vault-launched client's hooks to come ready, then finish
+        """Wait for a client's hooks to come ready, then finish
         registering it. Runs as its own task (one per client) so a client still
         at character select — whose player_struct isn't written until a wizard is
         selected — doesn't block the detection loop or the other clients' hooking.
@@ -1997,12 +2047,13 @@ async def main():
         takes; only a closed window (task cancellation) or a real error aborts it."""
         try:
             try:
-                await nc.activate_hooks()
+                await nc.activate_hooks(wait_for_ready=False)
             except wizwalker.errors.HookAlreadyActivated:
                 pass
+            await _wait_hooks_ready(nc)
             await _init_client_attrs(nc)
             nick = launched_account_map.get(handle)
-            logger.info(f"Auto-hooked vault-launched client '{nc.title}' ({nick}).")
+            logger.info(f"Hooked client '{nc.title}' (handle {handle}, {nick}).")
             _restart_always_on_tasks()
             _restart_active_toggle_tasks()
         except asyncio.CancelledError:
@@ -2028,6 +2079,30 @@ async def main():
             _send_hooked_clients_update()
 
     async def handle_gui():
+
+        async def _unhook_client(c, handle):
+            started = time.monotonic()
+            try:
+                # Resolution/resize asm hooks must be restored while the client is
+                # alive: close() rewrites the shared codecave they jump into.
+                try:
+                    await client_resizing_manager.teardown_client(handle)
+                except Exception as e:
+                    logger.opt(exception=e).debug(f"resize teardown failed for {handle}")
+                logger.debug(
+                    f"Unhook {handle}: resize teardown done in {time.monotonic() - started:.1f}s"
+                )
+                try:
+                    c.title = "Wizard101"
+                    await c.close()
+                except Exception as e:
+                    logger.opt(exception=e).warning(f"Unhook {handle}: close failed")
+                logger.info(
+                    f"Unhooked client (handle {handle}) in {time.monotonic() - started:.1f}s."
+                )
+            finally:
+                _unhooking.discard(handle)
+                _send_hooked_clients_update()
 
         async def handle_coord_error(error: wizwalker.errors.MemoryReadError):
             if await is_visible_by_path(foreground_client, play_button_path):
@@ -3861,6 +3936,9 @@ async def main():
 
                         case deimosgui.GUICommandType.UnhookClient:
                             handle = com.data
+                            _pending_hook = _hooking_tasks.pop(handle, None)
+                            if _pending_hook is not None and not _pending_hook.done():
+                                _pending_hook.cancel()
                             for c in walker.clients[:]:
                                 if c.window_handle == handle:
                                     # Stop managing the handle BEFORE tearing down so
@@ -3870,35 +3948,31 @@ async def main():
                                     if c.window_handle in walker._managed_handles:
                                         walker._managed_handles.remove(c.window_handle)
                                     walker.clients.remove(c)
-                                    # Restore the in-process resolution/resize asm
-                                    # hooks while the client is still alive — close()
-                                    # rewrites the hook codecave, so leaving these
-                                    # jumps patched into the game = dangling jump =
-                                    # crash. Must happen before c.close().
-                                    try:
-                                        await client_resizing_manager.teardown_client(handle)
-                                    except Exception as e:
-                                        logger.opt(exception=e).debug(
-                                            f"resize teardown failed for {handle}"
-                                        )
-                                    try:
-                                        c.title = "Wizard101"
-                                        await c.close()
-                                    except Exception:
-                                        pass
-                                    logger.info(f"Unhooked client (handle {handle}).")
+                                    # Teardown can take a long time on Wine; run it in its
+                                    # own task so the GUI and later commands aren't blocked.
+                                    _unhooking.add(handle)
+                                    _td = asyncio.create_task(_unhook_client(c, handle))
+                                    _teardown_tasks.add(_td)
+                                    _td.add_done_callback(_teardown_tasks.discard)
                                     break
                             _send_hooked_clients_update()
+                            # Drop loops still reading the client being torn down
+                            _restart_always_on_tasks()
                             if walker.clients:
-                                _restart_always_on_tasks()
                                 _restart_active_toggle_tasks()
 
                         case deimosgui.GUICommandType.HookClient:
                             handle = com.data
+                            if handle in _unhooking:
+                                logger.warning(
+                                    f"Handle {handle} is still unhooking, try again in a moment."
+                                )
+                                _send_hooked_clients_update()
+                                continue
                             # Remove from released set so it can be managed
                             released_handles.discard(handle)
                             # Check handle is still valid and not already managed
-                            if handle in walker._managed_handles:
+                            if handle in walker._managed_handles or handle in _hooking_tasks:
                                 logger.debug(
                                     f"Handle {handle} already managed, skipping."
                                 )
@@ -3915,6 +3989,8 @@ async def main():
                             walker.clients.append(nc)
                             existing_nums = set()
                             for c in walker.clients:
+                                if c is nc:
+                                    continue
                                 if c.title.startswith("p") and c.title[1:].isdigit():
                                     existing_nums.add(int(c.title[1:]))
                             num = 1
@@ -3923,33 +3999,17 @@ async def main():
                             nc.title = f"p{num}"
                             _hooking_in_progress.add(handle)
                             _send_hooked_clients_update()
-                            try:
-                                await nc.activate_hooks()
-                                await _init_client_attrs(nc)
-                                logger.info(
-                                    f"Manually hooked client '{nc.title}' (handle {handle})."
-                                )
-                            except wizwalker.errors.HookAlreadyActivated:
-                                await _init_client_attrs(nc)
-                                logger.info(
-                                    f"Manually hooked client '{nc.title}' (handle {handle}, already hooked)."
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to hook client (handle {handle}): {e}"
-                                )
-                                walker._managed_handles.remove(handle)
-                                walker.clients.remove(nc)
-                                _hooking_in_progress.discard(handle)
-                                _send_hooked_clients_update()
-                                continue
-                            _hooking_in_progress.discard(handle)
-                            _send_hooked_clients_update()
-                            _restart_always_on_tasks()
-                            _restart_active_toggle_tasks()
+                            # Own task: a client still at character select never
+                            # gets its hook values written and must not block this loop.
+                            _hooking_tasks[handle] = asyncio.create_task(
+                                _auto_hook_client(nc, handle)
+                            )
 
                         case deimosgui.GUICommandType.KillClient:
                             handle = com.data
+                            _pending_hook = _hooking_tasks.pop(handle, None)
+                            if _pending_hook is not None and not _pending_hook.done():
+                                _pending_hook.cancel()
                             # If handle belongs to a hooked client, unhook first
                             for c in walker.clients[:]:
                                 if c.window_handle == handle:
@@ -4039,7 +4099,8 @@ async def main():
                                 buy_potions, \
                                 use_team_up, \
                                 client_to_follow, \
-                                client_to_boost
+                                client_to_boost, \
+                                helper_client
                             global \
                                 questing_friend_tp, \
                                 gear_switching_in_solo_zones, \
@@ -4071,6 +4132,8 @@ async def main():
                                         client_to_follow = value
                                     case "client_to_boost":
                                         client_to_boost = value
+                                    case "helper_client":
+                                        helper_client = value
                                     case "friend_teleport":
                                         questing_friend_tp = value
                                     case "gear_switching_in_solo_zones":
@@ -4603,6 +4666,8 @@ async def main():
                 f"side_quests={side_quest_status} freecam={freecam_status}"
             )
             for c in list(walker.clients):
+                if c.window_handle in _hooking_in_progress:
+                    continue
                 try:
                     zone = await c.zone_name()
                     pos = await c.body.position()

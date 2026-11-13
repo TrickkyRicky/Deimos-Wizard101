@@ -214,6 +214,11 @@ def add_recent(category, filepath):
         _settings_ref.add_recent_import(category, filepath, _max_recent)
 
 
+def latest_recent(category):
+    recent = _recent_imports[category]
+    return recent[0] if recent else None
+
+
 def show_recent_menu(ctx, category, editor, btn):
     recent = _recent_imports[category]
     menu = QMenu(ctx.window)

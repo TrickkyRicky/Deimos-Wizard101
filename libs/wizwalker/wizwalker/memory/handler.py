@@ -6,6 +6,7 @@ import warnings
 import pymem
 import pymem.exception
 from loguru import logger
+from wizwalker.errors import PatternFailed
 
 from wizwalker import HookAlreadyActivated, HookNotActive, HookNotReady
 from .hooks import (
@@ -31,15 +32,27 @@ class HookHandler(MemoryReader):
     Manages hooks
     """
 
-    AUTOBOT_PATTERN = (
-        rb"\x48\x89\x5C\x24.\x48\x89\x74\x24.\x48\x89\x7C\x24."
-        rb"\x55\x41\x54\x41\x55\x41\x56\x41\x57"
-        rb"\x48\x8D\xAC\x24....\x48\x81\xEC...."
-        rb"\x48\x8B\x05....\x48\x33\xC4\x48\x89\x85...."
-        rb"\x4C\x8B\xF1.......\x80......\x0F\x84...."
+    # AutobotManager::Initialize runs once at startup, so its body is free to use as a code cave.
+    # (pattern, size rounded down) per client build, newest first
+    AUTOBOT_PATTERNS = (
+        (
+            rb"\x48\x8B\xC4\x55\x41\x54\x41\x55\x41\x56\x41\x57"
+            rb"\x48\x8D\xA8....\x48\x81\xEC...."
+            rb"\x48\xC7\x45.\xFE\xFF\xFF\xFF\x48\x89\x58\x10\x48\x89\x70\x18\x48\x89\x78\x20"
+            rb"\x48\x8B\x05....\x48\x33\xC4\x48\x89\x85...."
+            rb"\x4C\x8B\xE9\x48\x8B\x05....\x80\xB8...\x00\x00\x0F\x84....",
+            3900,
+        ),
+        (
+            rb"\x48\x89\x5C\x24.\x48\x89\x74\x24.\x48\x89\x7C\x24."
+            rb"\x55\x41\x54\x41\x55\x41\x56\x41\x57"
+            rb"\x48\x8D\xAC\x24....\x48\x81\xEC...."
+            rb"\x48\x8B\x05....\x48\x33\xC4\x48\x89\x85...."
+            rb"\x4C\x8B\xF1.......\x80......\x0F\x84....",
+            4100,
+        ),
     )
-    # rounded down
-    AUTOBOT_SIZE = 4100
+    AUTOBOT_PATTERN, AUTOBOT_SIZE = AUTOBOT_PATTERNS[0]
 
     def __init__(self, process: pymem.Pymem, client):
         super().__init__(process)
@@ -70,13 +83,17 @@ class HookHandler(MemoryReader):
         return addr
 
     async def _get_autobot_address(self):
-        addr = await self.pattern_scan(
-            self.AUTOBOT_PATTERN, module="WizardGraphicalClient.exe"
-        )
-        if addr is None:
-            raise RuntimeError("Pattern scan failed for autobot pattern")
+        for pattern, size in self.AUTOBOT_PATTERNS:
+            try:
+                addr = await self.pattern_scan(pattern, module="WizardGraphicalClient.exe")
+            except PatternFailed:
+                continue
 
-        self._autobot_address = addr
+            self.AUTOBOT_PATTERN, self.AUTOBOT_SIZE = pattern, size
+            self._autobot_address = addr
+            return
+
+        raise PatternFailed(self.AUTOBOT_PATTERNS[0][0])
 
     # noinspection PyTypeChecker
     async def _prepare_autobot(self):

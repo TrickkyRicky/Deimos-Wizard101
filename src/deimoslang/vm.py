@@ -3,6 +3,7 @@ import re
 from asyncio import Task as AsyncTask, TaskGroup
 
 from wizwalker import AddressOutOfRange, Client, XYZ, Keycode, MemoryReadError, Primitive
+from wizwalker.combat import CombatHandler
 from wizwalker.memory import DynamicClientObject
 from wizwalker.memory.memory_objects.quest_data import QuestData, GoalData
 from wizwalker.extensions.wizsprinter import SprintyClient
@@ -318,6 +319,17 @@ class VM:
                         
         return False
     
+    async def _in_boss_fight(self, client: SprintyClient) -> bool:
+        try:
+            if not await client.in_battle():
+                return False
+            for member in await CombatHandler(client).get_members():
+                if await member.is_boss():
+                    return True
+        except Exception as e:
+            logger.debug(f"bossfight check failed: {e!r}")
+        return False
+
     async def _check_duel_round(self, client: SprintyClient) -> int:
         try:
             if not await client.in_battle():
@@ -869,6 +881,20 @@ class VM:
                 else:
                     for client in clients:
                         if not await client.in_battle():
+                            return False
+                    return True
+            case ExprKind.boss_fight:
+                if selector.any_player:
+                    self._any_player_client = []
+                    found_any = False
+                    for client in self._clients:
+                        if await self._in_boss_fight(client):
+                            self._any_player_client.append(client)
+                            found_any = True
+                    return found_any
+                else:
+                    for client in clients:
+                        if not await self._in_boss_fight(client):
                             return False
                     return True
             case ExprKind.has_quest:
@@ -1471,7 +1497,10 @@ class VM:
                             
                             async def proxy(client: SprintyClient): # type: ignore
                                 async with client.mouse_handler:
-                                    await teleport_to_friend_from_list(client, name=name)
+                                    try:
+                                        await teleport_to_friend_from_list(client, name=name)
+                                    except ValueError as e:
+                                        logger.error(f"friendtp failed for {client.title}: {e}")
                             for client in clients:
                                 tg.create_task(proxy(client))
                         case TeleportKind.client_num:

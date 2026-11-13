@@ -1050,6 +1050,7 @@ async def teleport_to_friend_from_list(
     )
 
     if friend is None:
+        await friends_window.write_flags(WindowFlags(2147483648))
         raise ValueError(
             f"Could not find friend with icon {icon_index} icon list {icon_list} and/or name {name}"
         )

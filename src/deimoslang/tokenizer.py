@@ -120,6 +120,7 @@ class TokenKind(Enum):
     command_expr_tracking_goal = auto()
     command_expr_loading = auto()
     command_expr_in_combat = auto()
+    command_expr_boss_fight = auto()
     command_expr_has_dialogue = auto()
     command_expr_has_xyz = auto()
     command_expr_health_below = auto()
@@ -551,6 +552,8 @@ class Tokenizer:
                                         put_simple(TokenKind.command_expr_loading, full)
                                     case "incombat":
                                         put_simple(TokenKind.command_expr_in_combat, full)
+                                    case "bossfight" | "inbossfight":
+                                        put_simple(TokenKind.command_expr_boss_fight, full)
                                     case "hasdialogue":
                                         put_simple(TokenKind.command_expr_has_dialogue, full)
                                     case "hasxyz":

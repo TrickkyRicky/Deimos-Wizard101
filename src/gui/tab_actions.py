@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QFileD
 from PyQt6.QtCore import Qt
 
 from src.gui.commands import GUICommand, GUICommandType
-from src.gui.helpers import centered_label, repo_icon_btn, add_recent, show_recent_menu, is_dev_build
+from src.gui.helpers import centered_label, repo_icon_btn, add_recent, show_recent_menu, is_dev_build, latest_recent
 
 
 def _make_toggle_btn(ctx, play_tooltip, kill_tooltip, execute_cb, kill_cb, action_id):
@@ -138,6 +138,18 @@ def build_bot_tab(ctx):
     def kill_bot_callback():
         ctx.send_queue.put(GUICommand(GUICommandType.KillBot))
 
+    def reload_bot():
+        path = latest_recent('bot')
+        if not path:
+            return
+        try:
+            with open(path, encoding='utf-8') as f:
+                text = f.read()
+        except OSError:
+            return
+        editor.setPlainText(text)
+        ctx.send_queue.put(GUICommand(GUICommandType.ExecuteBot, text))
+
     def bot_search():
         from src.gui.popups import show_bot_search_popup
         existing = getattr(ctx, 'bot_search_dialog', None)
@@ -171,7 +183,8 @@ def build_bot_tab(ctx):
             except RuntimeError:
                 pass
         ctx.testing_bots_dialog = show_testing_bots_popup(ctx, tab, editor)
-
+    btn_row.addWidget(ctx.registry.action_icon_btn(ctx.svgs['refresh'], ctx.tl('reload_bot'), reload_bot))
+    
     toggle_btn, set_bot_running = _make_toggle_btn(
         ctx, ctx.tl('run_bot'), ctx.tl('kill_bot'),
         run_bot_callback, kill_bot_callback, 'toggle_bot')

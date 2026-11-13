@@ -313,6 +313,7 @@ def show_settings_dialog(ctx):
     questing_form.setSpacing(4)
 
     _add_client_combo(questing_form, 'client_to_boost', 'setting_client_to_boost')
+    _add_client_combo(questing_form, 'helper_client', 'setting_helper_client')
     _add_checkbox(questing_form, 'friend_teleport', 'setting_friend_teleport')
     _add_checkbox(questing_form, 'gear_switching_in_solo_zones', 'setting_gear_switching')
     _add_client_combo(questing_form, 'hitter_client', 'setting_hitter_client')
@@ -402,7 +403,7 @@ def show_settings_dialog(ctx):
                 values[key] = w.value()
             elif isinstance(w, QComboBox):
                 text = w.currentText()
-                if key in ('client_to_follow', 'client_to_boost', 'hitter_client'):
+                if key in ('client_to_follow', 'client_to_boost', 'hitter_client', 'helper_client'):
                     values[key] = None if text == 'None' else text
                 else:
                     values[key] = text

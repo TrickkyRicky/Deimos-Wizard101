@@ -541,6 +541,10 @@ class Parser:
                 result.kind = CommandKind.expr
                 self.i += 1
                 result.data = [ExprKind.in_combat]
+            case TokenKind.command_expr_boss_fight:
+                result.kind = CommandKind.expr
+                self.i += 1
+                result.data = [ExprKind.boss_fight]
             case TokenKind.command_expr_has_quest:
                 result.kind = CommandKind.expr
                 self.i += 1

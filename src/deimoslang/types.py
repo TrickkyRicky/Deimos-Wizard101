@@ -103,6 +103,7 @@ class ExprKind(Enum):
     tracking_goal = auto()
     loading = auto()
     in_combat = auto()
+    boss_fight = auto()
     has_dialogue = auto()
     has_xyz = auto()
     has_quest = auto()
